@@ -1,0 +1,15 @@
+[project]
+name = "gravai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.135.1",
+    "httpx>=0.28.1",
+    "playwright",
+    "pyaudio>=0.2.14",
+    "pytest>=9.0.2",
+    "websockets>=16.0",
+    "opuslib>=3.0.1",
+]

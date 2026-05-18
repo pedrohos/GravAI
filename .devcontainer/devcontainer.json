@@ -1,0 +1,31 @@
+{
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "runArgs": [
+        "--network=host",
+    ],
+    "mounts": [
+        // "source=/tmp/test-tshark,target=/host_tmp_t_shark,type=bind"
+    ],
+    "postStartCommand": "mkdir -p /run/dbus && dbus-daemon --system --fork",
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python"
+            ],
+            "settings": {
+                "python.testing.pytestArgs": [
+                    "."
+                ],
+                "python.testing.unittestEnabled": false,
+                "python.testing.pytestEnabled": true,
+                "python.formatting.provider": "black",
+                "python.linting.mypyEnabled": true,
+                "python.linting.enabled": true
+            }
+        }
+    }
+}

@@ -1,0 +1,37 @@
+FROM python:3.12-slim-trixie
+
+WORKDIR /app
+
+# ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update &&\
+    apt-get install -y --no-install-recommends curl\
+        ca-certificates gcc libasound-dev portaudio19-dev\
+        libportaudio2 libportaudiocpp0 build-essential\
+        libcap2-bin pulseaudio ffmpeg &&\
+    rm -rf /var/lib/apt/lists/*
+
+# Fix dumpcap capabilities to run in unprivileged docker environments - required by tshark
+# RUN setcap -r /usr/bin/dumpcap && chmod 755 /usr/bin/dumpcap
+
+# RUN pulseaudio --start
+
+RUN mkdir -p /run/dbus
+
+ADD https://astral.sh/uv/install.sh /uv-installer.sh
+
+# Run the installer then remove it
+RUN sh /uv-installer.sh && rm /uv-installer.sh
+
+ENV PATH="/root/.local/bin/:$PATH"
+ENV PATH="/app/.env/bin:${PATH}"
+
+COPY pyproject.toml uv.lock /app/
+
+RUN uv sync
+
+COPY . /app
+
+# Run this after container finished building
+# RUN uv run playwright install-deps
+# RUN uv run playwright install

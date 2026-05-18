@@ -1,0 +1,163 @@
+import os
+import json
+from datetime import datetime
+import subprocess
+from models.models import (
+    SessionDataDTO,
+    TrackInfoDTO,
+    ActionType,
+    ParticipantData,
+    Track,
+    Session
+)
+from collections import defaultdict
+
+
+def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
+    sidecar_path = os.path.join(slice_audio_tracks, "session_sidecar.json")
+    vad_timeline_path = os.path.join(slice_audio_tracks, "vad_timeline.json")
+    main_audio_track_path = None
+    main_audio_track_name = None
+    main_audio_track_name_sidecar_key = None
+    for candidate_f in os.listdir(slice_audio_tracks):
+        if candidate_f.startswith("track_mainAudio"):
+            main_audio_track_path = os.path.join(slice_audio_tracks, candidate_f)
+            main_audio_track_name = candidate_f
+            main_audio_track_name_sidecar_key = candidate_f[:candidate_f.find(".")].replace("track_", "")
+            break
+    assert os.path.exists(sidecar_path)
+    assert os.path.exists(vad_timeline_path)
+    assert main_audio_track_path is not None
+
+    with open(sidecar_path, "r") as f:
+        session_info = json.load(f)
+
+    with open(vad_timeline_path, "r") as f:
+        vad_timeline = json.load(f)
+
+    session_data = SessionDataDTO(
+        start_time=datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["started_at"]),
+        end_time=datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["ended_at"]),
+        main_track_name=main_audio_track_name,
+        session_id=session_info["session_id"],
+        events=[
+            TrackInfoDTO(
+                # action=ActionType.START if event["type"] == "start" else ActionType.END,
+                participant_name=event["data"]["participantName"],
+                element_id=event["data"]["id"],
+                class_count=event["data"]["classCount"],
+                timestamp=event["timestamp"],
+            ) for event in vad_timeline["events"]
+        ],
+    )
+    return session_data
+
+def _process_participant_data(session_data: SessionDataDTO):
+    all_participants_data = defaultdict(list)
+    for event in session_data.events:
+        all_participants_data[event.element_id].append({
+            "class_count": event.class_count,
+            "timestamp": event.timestamp,
+            "participant_name": event.participant_name,
+        })
+        # print(f"{event.timestamp} - {event.participant_name} - {event.element_id} - classCount={event.class_count}")
+    return all_participants_data
+
+def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data: dict) -> dict:
+    participants_tracks = {}
+    for participant_id, participant_data in all_participants_data.items():
+        class_counts = [event["class_count"] for event in participant_data]
+        end_action = min(class_counts)
+        start_action = max(class_counts)
+        assert len([c for c in class_counts if c == end_action or c == start_action]) == len(class_counts), "Expected only two distinct class counts per participant, representing start and end actions."
+
+        track_changes = []
+        for event in participant_data:
+            time_in_s = datetime.fromtimestamp(event["timestamp"] / 1000).astimezone() - session_data.start_time
+            print(time_in_s)
+            if len(track_changes) == 0:
+                if event["class_count"] == start_action:
+
+                    
+                    track_changes.append((ActionType.START, time_in_s))
+            else:
+                last_change = track_changes[-1]
+                if event["class_count"] == end_action and last_change[0] == ActionType.START:
+                    track_changes.append((ActionType.END, time_in_s))
+        if track_changes[-1][0] == ActionType.START:
+            track_changes.append((ActionType.END, session_data.end_time - session_data.start_time))
+
+        participants_tracks[participant_id] = track_changes
+    
+    return participants_tracks
+
+def slice_audio_tracks(slice_audio_tracks: str):
+    session_data = _extract_session_dto(slice_audio_tracks)
+    all_participants_data = _process_participant_data(session_data)
+    participants_tracks_locations = _find_participant_tracks(session_data, all_participants_data)
+    session = create_session(slice_audio_tracks, session_data, all_participants_data, participants_tracks_locations)
+    return session
+
+def create_session(slice_audio_tracks, session_data, all_participants_data, participants_tracks_locations):
+    participants_tracks = {}
+    # Create an audio track that is the same size as the main track original and put zero audio outside of the desired track from the participant (so only the participant audio is present in the track, but it is aligned with the main track timeline)
+    for participant_id, track_changes in participants_tracks_locations.items():
+        participant_track_path = os.path.join(slice_audio_tracks, f"track_{participant_id}.wav")
+        main_track_path = os.path.join(slice_audio_tracks, session_data.main_track_name)
+        print(track_changes)
+        segments = []
+        start_time = None
+        for change in track_changes:
+            if change[0] == ActionType.START:
+                start_time = change[1].total_seconds()
+            elif start_time is not None:
+                end_time = change[1].total_seconds()
+                segments.append((start_time, end_time))
+                start_time = None
+
+        if segments:
+            active_expr = " + ".join(
+                f"between(t,{start},{end})" for start, end in segments
+            )
+        else:
+            active_expr = "0"
+
+        filter_chain = ",".join([
+            "apad=pad_dur=2",
+            f"volume=enable='{active_expr}':volume=1",
+            f"volume=enable='not({active_expr})':volume=0",
+        ])
+
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", main_track_path,
+            "-af", filter_chain,
+            participant_track_path,
+        ]
+        subprocess.run(ffmpeg_cmd, check=True)
+
+        participants_tracks[participant_id] = ParticipantData(
+            participant_id=participant_id,
+            participant_name=all_participants_data[participant_id][0]["participant_name"],
+            track=Track(
+                wav_file_path=participant_track_path
+            )
+        )
+
+    return Session(
+        session_id=session_data.session_id,
+        session_start=session_data.start_time,
+        session_end=session_data.end_time,
+        tracks=participants_tracks,
+    )
+
+class Slicer():
+    @staticmethod
+    def slice_teams_audio_track(audio_tracks_path: str) -> Session:
+        return slice_audio_tracks(audio_tracks_path)
+    
+    @staticmethod
+    def save_session_data(session: Session, output_path: str):
+        with open(output_path, "w") as f:
+            json.dump(session.model_dump(), f, default=str)
