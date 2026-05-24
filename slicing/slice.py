@@ -11,6 +11,18 @@ from models.models import (
     Session
 )
 from collections import defaultdict
+import time
+
+def _load_json_or_raise(path: str, label: str) -> dict:
+    if not os.path.exists(path):
+        raise RuntimeError(f"Missing {label} file: {path}")
+    if os.path.getsize(path) == 0:
+        raise RuntimeError(f"Empty {label} file: {path}")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Invalid JSON in {label} file: {path} ({exc})") from exc
 
 
 def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
@@ -25,15 +37,19 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
             main_audio_track_name = candidate_f
             main_audio_track_name_sidecar_key = candidate_f[:candidate_f.find(".")].replace("track_", "")
             break
-    assert os.path.exists(sidecar_path)
-    assert os.path.exists(vad_timeline_path)
+        
+    if not os.path.exists(sidecar_path):
+        time.sleep(1)  # Wait a bit in case the file is still being written
+        if not os.path.exists(sidecar_path):
+            raise RuntimeError(f"Missing sidecar file: {sidecar_path}")
+    if not os.path.exists(vad_timeline_path):
+        time.sleep(1)  # Wait a bit in case the file is still being written
+        if not os.path.exists(vad_timeline_path):
+            raise RuntimeError(f"Missing VAD timeline file: {vad_timeline_path}")
     assert main_audio_track_path is not None
 
-    with open(sidecar_path, "r") as f:
-        session_info = json.load(f)
-
-    with open(vad_timeline_path, "r") as f:
-        vad_timeline = json.load(f)
+    session_info = _load_json_or_raise(sidecar_path, "session sidecar")
+    vad_timeline = _load_json_or_raise(vad_timeline_path, "VAD timeline")
 
     session_data = SessionDataDTO(
         start_time=datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["started_at"]),

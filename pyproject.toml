@@ -12,4 +12,5 @@ dependencies = [
     "pytest>=9.0.2",
     "websockets>=16.0",
     "opuslib>=3.0.1",
+    "requests>=2.34.2",
 ]

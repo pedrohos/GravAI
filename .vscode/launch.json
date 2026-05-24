@@ -5,6 +5,21 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python Debugger: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "fastapi",
+            "args": [
+                "run",
+                "api/app.py"
+            ],
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "console": "integratedTerminal",
+            "envFile": "${workspaceFolder}/.env",
+            "justMyCode": true,
+            "subProcess": true
+        },
+        {
             "name": "Python Debugger: Pytest",
             "type": "debugpy",
             "request": "launch",
@@ -16,9 +31,8 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "subProcess": true
-        }
-,
-{
+        },
+        {
             "name": "Python Debugger: Test",
             "type": "debugpy",
             // "request": "attatch",
