@@ -14,7 +14,7 @@ GravAI is a privacy-first system designed to join online meetings, capture per-p
 - FastAPI endpoints to trigger recording and transcribe.
 - Teams meeting recording (WIP) with per-participant audio output.
 - WebSocket audio server writing per-track WAV files and session metadata sidecar.
-- Transcription via external Whisper service.
+- Transcription via Whisper.
 
 ### Roadmap
 
@@ -24,5 +24,24 @@ GravAI is a privacy-first system designed to join online meetings, capture per-p
 - Add diarization support as an optional step.
 - Integrate LLM workflows (summaries, minutes, action items, knowledge base sync).
 - Better observability, retries, and error reporting for long sessions.
+
+### Setup
+
+1. Copy the env file and define its variables accordingly:
+```bash
+cp .env.example .env
+```
+
+2.a. Start your external whisper server for transcription and specify the WHISPER_HOST and WHISPER_PORT accordingly on .env file and the GravAI docker-compose without: (Optional)
+```bash
+docker compose -f docker-compose.yaml up -d
+```
+
+2.b. Or deploy the GravAI docker-compose with whisper built-in: (Optional)
+```bash
+docker compose -f docker-compose-whisper.yaml up -d
+```
+
+3. Connect to the instance [http://localhost:8000](http://localhost:8000)
 
 The project is early-stage and evolving. Expect breaking changes as we harden reliability and multi-platform support.

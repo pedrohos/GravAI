@@ -1,0 +1,12 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gravai-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - .env:/app/.env
+    restart: unless-stopped
+    entrypoint: ["uv", "run", "fastapi", "run", "api/app.py", "--host", "0.0.0.0", "--port", "8000"]

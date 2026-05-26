@@ -1,0 +1,22 @@
+FROM ubuntu:24.04
+
+ARG WHISPER_VERSION=1.8.4
+WORKDIR /app
+
+RUN apt-get update &&\
+    apt-get install -y --no-install-recommends curl \
+        ca-certificates gcc cmake zip unzip wget \
+        build-essential &&\
+    rm -rf /var/lib/apt/lists/*
+
+RUN wget https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_VERSION}.zip
+
+RUN unzip v${WHISPER_VERSION}.zip &&\
+    rm v${WHISPER_VERSION}.zip
+
+WORKDIR /app/whisper.cpp-${WHISPER_VERSION} 
+
+RUN cmake -B build
+RUN cmake --build build -j --config Release
+    
+RUN sh models/download-ggml-model.sh large-v3
