@@ -36,7 +36,7 @@ class Settings(BaseSettings, Singleton):
     )
 
     VAD_OBSERVER_TEAMS_JS_PATH: str = Field(
-        default_factory=lambda: os.path.join(os.path.dirname(__file__), "..", "recording", "teams", "vad_observer.js"),
+        default_factory=lambda: os.path.join(os.path.dirname(__file__), "..", "recording", "providers", "teams", "vad_observer.js"),
         description="Path to the VAD observer JavaScript file",
     )
 

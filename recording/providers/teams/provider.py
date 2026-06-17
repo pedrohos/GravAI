@@ -65,8 +65,16 @@ class MeetingRecorder(BaseModel):
             target=self.record_meeting,
             args=(meeting_url, q, tracks_output_dir, debug, intercept_js, vad_observer_js, vad_events, vad_meta),
         )
+
         p_join_browser.start()
-        p_join_browser.join()
+
+        try:
+            p_join_browser.join()
+        except KeyboardInterrupt:
+            print("Keyboard interrupt received, signaling recording process to stop...")
+            q.put(("keyboard_interrupt", None))
+            p_join_browser.join()
+            
         print("Finished - Recording")
 
         res = q.get_nowait()
@@ -186,7 +194,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
                 try:
                     if debug:
                         page.screenshot(path="prejoin2.png")
-                    page.get_by_role("button", name="Continue without audio or video").click(timeout=3000)
+                    page.get_by_role("button", name="Continue without audio or video").first.click(timeout=8000)
                 except Exception:
                     pass
 
@@ -203,7 +211,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
                 input_box.fill("Bot de Gravação de Pedro Silva")
 
                 try:
-                    page.get_by_role("button", name="Join now").click(timeout=5000)
+                    page.get_by_role("button", name="Join now").first.click(timeout=5000)
                 except Exception:
                     print("Failed to click 'Join now' button, attempting alternative.")
                     for _ in range(4):
@@ -242,6 +250,9 @@ class TeamsMeetingRecorder(MeetingRecorder):
                 rejected_h1_locator = page.locator("h1[id='calling-retry-screen-title']")
 
                 deadline = time.time() + 7_200
+                
+                last_vad_event_time_update = time.time()
+                last_vad_event_count = 0
                 while True:
                     _drain_vad_events()
                     try:
@@ -252,6 +263,14 @@ class TeamsMeetingRecorder(MeetingRecorder):
                         raise Exception("Rejected from joining the meeting")
 
                     try:
+                        if len(vad_events) != last_vad_event_count:
+                            last_vad_event_time_update = time.time()
+                            last_vad_event_count = len(vad_events)
+                        # Checks for inactivity in VAD events to determine if the meeting has likely ended,
+                        # as a fallback in case the end-of-meeting indicators are not detected
+                        elif time.time() - last_vad_event_time_update > 420:
+                            break
+
                         ended_span_locator.or_(removed_h1_locator).wait_for(state="visible", timeout=1000)
                         break
                     except Exception as e:

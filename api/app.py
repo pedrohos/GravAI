@@ -1,19 +1,21 @@
 from fastapi import FastAPI, HTTPException
 import json
-from config.settings import Settings
-from models.models import Session
-from recording.teams import TeamsMeetingRecorder, stop_ws_audio_server
-from slicing.slice import Slicer
-from transcribe.base import transcribe_meeting_tracks
 from contextlib import asynccontextmanager
+
+from recording.service import record_meeting as service_record_meeting
+from recording.service import start_ws_server as service_record_start_ws_server
+from recording.service import stop_ws_server as service_record_stop_ws_server
+
+from slicing.service import slice_track as service_slice_track
+
+from transcribe.service import transcribe_meeting_tracks as service_transcribe_meeting_tracks
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = Settings()
-    TeamsMeetingRecorder.launch_ws_server(settings.SAVE_DIR, settings.WS_HOST, settings.WS_PORT, settings.WS_AUDIO_SERVER_PATH)
+    service_record_start_ws_server()
     yield
-    stop_ws_audio_server()
+    service_record_stop_ws_server()
 
 app = FastAPI(
     description="record_bot",
@@ -26,10 +28,10 @@ async def record_meeting(meeting_url: str, slice_tracks: bool = True):
         return json.dumps({"error": "Only Teams meetings are supported at the moment. Make sure the url contains 'teams.live.com'."})
 
     try:
-        tracks_output_dir = _record_meeting(meeting_url)
+        tracks_output_dir = service_record_meeting(meeting_url)
         metadata_output_path, session = None, None
         if slice_tracks:
-            metadata_output_path, session = _slice_track(tracks_output_dir)
+            metadata_output_path, session = service_slice_track(tracks_output_dir)
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail=f"{str(e)}")
@@ -43,9 +45,9 @@ async def record_meeting_and_transcribe(meeting_url: str):
         return json.dumps({"error": "Only Teams meetings are supported at the moment. Make sure the url contains 'teams.live.com'."})
 
     try:
-        tracks_output_dir = _record_meeting(meeting_url)
-        metadata_output_path, session = _slice_track(tracks_output_dir)
-        transc_session = transcribe_meeting_tracks(session)
+        tracks_output_dir = service_record_meeting(meeting_url)
+        metadata_output_path, session = service_slice_track(tracks_output_dir)
+        transc_session = service_transcribe_meeting_tracks(session)
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail=f"{str(e)}")
@@ -55,22 +57,10 @@ async def record_meeting_and_transcribe(meeting_url: str):
 @app.post("/transcribe")
 async def transcribe(tracks_output_dir: str):
     try:
-        metadata_output_path, session = _slice_track(tracks_output_dir)
-        transc_session = transcribe_meeting_tracks(session)
+        metadata_output_path, session = service_slice_track(tracks_output_dir)
+        transc_session = service_transcribe_meeting_tracks(session)
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail=f"{str(e)}")
 
     return {"recording_path": tracks_output_dir, "session_metadata_path": metadata_output_path, "transcribed_slices_session": transc_session}
-
-def _record_meeting(meeting_url: str) -> str:
-    teams = TeamsMeetingRecorder()
-    tracks_output_dir = teams.record_meeting_with_ws_audio_server(meeting_url)
-    return tracks_output_dir
-
-def _slice_track(tracks_output_dir: str) -> tuple[str, Session]:
-    session = Slicer.slice_teams_audio_track(tracks_output_dir)
-    metadata_output_path = f"{tracks_output_dir}/session_metadata.json"
-    Slicer.save_session_data(session, metadata_output_path)
-
-    return metadata_output_path, session

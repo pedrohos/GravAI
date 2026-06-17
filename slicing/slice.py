@@ -107,19 +107,12 @@ def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data
     
     return participants_tracks
 
-def slice_audio_tracks(slice_audio_tracks: str):
-    session_data = _extract_session_dto(slice_audio_tracks)
-    all_participants_data = _process_participant_data(session_data)
-    participants_tracks_locations = _find_participant_tracks(session_data, all_participants_data)
-    session = create_session(slice_audio_tracks, session_data, all_participants_data, participants_tracks_locations)
-    return session
-
-def create_session(slice_audio_tracks, session_data, all_participants_data, participants_tracks_locations):
-    participants_tracks = {}
+def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations):
+    participants_tracks_path = {}
     # Create an audio track that is the same size as the main track original and put zero audio outside of the desired track from the participant (so only the participant audio is present in the track, but it is aligned with the main track timeline)
     for participant_id, track_changes in participants_tracks_locations.items():
-        participant_track_path = os.path.join(slice_audio_tracks, f"track_{participant_id}.wav")
-        main_track_path = os.path.join(slice_audio_tracks, session_data.main_track_name)
+        participant_track_path = os.path.join(audio_tracks_path, f"track_{participant_id}.wav")
+        main_track_path = os.path.join(audio_tracks_path, session_data.main_track_name)
         print(track_changes)
         segments = []
         start_time = None
@@ -153,27 +146,59 @@ def create_session(slice_audio_tracks, session_data, all_participants_data, part
         ]
         subprocess.run(ffmpeg_cmd, check=True)
 
-        participants_tracks[participant_id] = ParticipantData(
-            participant_id=participant_id,
-            participant_name=all_participants_data[participant_id][0]["participant_name"],
-            track=Track(
-                wav_file_path=participant_track_path
-            )
-        )
-
-    return Session(
-        session_id=session_data.session_id,
-        session_start=session_data.start_time,
-        session_end=session_data.end_time,
-        tracks=participants_tracks,
-    )
+        # participants_tracks_path[participant_id] = participant_track_path
+    # return participants_tracks_path    
 
 class Slicer():
     @staticmethod
+    def slice_audio_tracks(audio_tracks_path: str):
+        session_data_dto = _extract_session_dto(audio_tracks_path)
+        all_participants_data = _process_participant_data(session_data_dto)
+        participants_tracks_locations = _find_participant_tracks(session_data_dto, all_participants_data)
+        _ffmpeg_slice(audio_tracks_path, session_data_dto, participants_tracks_locations)
+
+        with open(os.path.join(audio_tracks_path, "slice_metadata.json"), "w") as f:
+            json.dump({
+                "session_data": session_data_dto.model_dump(),
+                "all_participants_data": all_participants_data,
+                "participants_tracks_locations": participants_tracks_locations
+            }, f, default=str)
+
+    @staticmethod
     def slice_teams_audio_track(audio_tracks_path: str) -> Session:
-        return slice_audio_tracks(audio_tracks_path)
+        Slicer.slice_audio_tracks(audio_tracks_path)
+        session = Slicer.create_session(audio_tracks_path)
+        return session
     
     @staticmethod
     def save_session_data(session: Session, output_path: str):
         with open(output_path, "w") as f:
             json.dump(session.model_dump(), f, default=str)
+
+    @staticmethod
+    def create_session(audio_tracks_path: str):
+        with open(os.path.join(audio_tracks_path, "slice_metadata.json"), "r") as f:
+            metadata = json.load(f)
+
+        session_data_dto = SessionDataDTO(**metadata["session_data"])
+        all_participants_data = metadata["all_participants_data"]
+        participants_tracks_locations = metadata["participants_tracks_locations"]
+
+        session_tracks = {}
+        for participant_id, track_changes in participants_tracks_locations.items():
+            participant_name = all_participants_data[participant_id][0]["participant_name"]
+            participant_track_path = os.path.join(audio_tracks_path, f"track_{participant_id}.wav")
+            session_tracks[participant_id] = ParticipantData(
+                participant_id=participant_id,
+                participant_name=participant_name,
+                track=Track(
+                    wav_file_path=participant_track_path
+                )
+            )
+            assert os.path.exists(participant_track_path), f"Expected track file for participant {participant_name} (id: {participant_id}) not found at path: {participant_track_path}. Retry slicing or check for errors in ffmpeg slicing step."
+        return Session(
+            session_id=session_data_dto.session_id,
+            session_start=session_data_dto.start_time,
+            session_end=session_data_dto.end_time,
+            tracks=session_tracks
+        )
