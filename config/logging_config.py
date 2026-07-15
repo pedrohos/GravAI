@@ -22,7 +22,7 @@ def get_logger(name: str, log_dir: str | None = None,  filename: str = "session.
     if cache_key in _configured:
         return logger
 
-    settings = Settings()
+    settings = Settings() # type: ignore
     logger.setLevel(getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
     logger.propagate = False
 

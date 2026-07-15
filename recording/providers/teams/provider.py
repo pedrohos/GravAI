@@ -32,18 +32,18 @@ def stop_ws_audio_server() -> None:
     with _WS_LOCK:
         if _ws_proc_alive(_WS_PROC):
             try:
-                _WS_PROC.kill()
+                _WS_PROC.kill() # type: ignore
             except Exception:
                 pass
         _WS_PROC = None
 
 class MeetingRecorder(BaseModel):
-    rtc_intercept_js_path: str
-    vad_observer_js_path: str
-    audio_worklet_js_path: str
+    rtc_intercept_js_path: str | None
+    vad_observer_js_path: str | None
+    audio_worklet_js_path: str | None
 
     @abstractmethod
-    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict) -> Session:
+    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict):
         pass
 
     @abstractmethod
@@ -51,7 +51,7 @@ class MeetingRecorder(BaseModel):
         pass
 
     def record_meeting_with_ws_audio_server(self, meeting_url: str, output_dir: str | None = None, ws_host: str | None = None, ws_port: int | None = None, debug: bool = False):
-        settings = Settings()
+        settings = Settings() # type: ignore
 
         session_id, tracks_output_dir, q, base_output_dir = self.setup(output_dir or settings.SAVE_DIR)
         logger = get_logger("recording.teams", tracks_output_dir)
@@ -137,7 +137,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
     @model_validator(mode="after")
     def assemble_es_hosts(self) -> "TeamsMeetingRecorder":
         """Constructs the ES_HOSTS URL after model validation."""
-        settings = Settings()
+        settings = Settings() # type: ignore
         self.audio_worklet_js_path = self.audio_worklet_js_path or settings.AUDIO_WORKLET_JS_PATH
         self.rtc_intercept_js_path = self.rtc_intercept_js_path or settings.RTC_INTERCEPT_JS_PATH
         self.vad_observer_js_path = self.vad_observer_js_path or settings.VAD_OBSERVER_TEAMS_JS_PATH
@@ -169,7 +169,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
 
         return intercept_js, vad_observer_js, vad_events, vad_meta
 
-    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict) -> Session:
+    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict):
         logger = get_logger("recording.teams", output_dir)
         try:
             with sync_playwright() as p:

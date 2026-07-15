@@ -14,3 +14,4 @@ wheels/
 *.wav
 *.weba
 *.ipynb
+*.log

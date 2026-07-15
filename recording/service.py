@@ -11,7 +11,7 @@ def start_ws_server(
 	ws_port: int | None = None,
 	ws_server_path: str | None = None,
 ) -> None:
-	settings = Settings()
+	settings = Settings() # type: ignore
 	logger.info("Starting WS audio server")
 	TeamsMeetingRecorder.launch_ws_server(
 		output_dir or settings.SAVE_DIR,

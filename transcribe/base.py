@@ -12,7 +12,7 @@ def transcribe_meeting_tracks(
         whisper_server_host: str | None = None,
         whisper_server_port: int | None = None
     ):
-    settings = Settings()
+    settings = Settings() # type: ignore
     whisper_host = whisper_server_host or settings.WHISPER_HOST
     whisper_port = whisper_server_port or settings.WHISPER_PORT
     log_dir = os.path.dirname(next(iter(session.tracks.values())).track.wav_file_path) if session.tracks else None
@@ -24,7 +24,7 @@ def transcribe_meeting_tracks(
         wav_file_path = participant_data.track.wav_file_path
         os.makedirs(os.path.dirname(wav_file_path), exist_ok=True)
         logger.info(f"Transcribing track for participant {participant_data.participant_name} (id: {participant_id})")
-        transcription = transcribe(wav_file_path, whisper_host, whisper_port)
+        transcription = transcribe(wav_file_path, whisper_host, int(whisper_port))
         transcription_text = transcription.get("text", "")
         transcription_segments = transcription.get("segments", "")
         transcription_text_output_path = wav_file_path.split(".")[0] + "_transcription_text.txt"
