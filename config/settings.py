@@ -62,6 +62,12 @@ class Settings(BaseSettings, Singleton):
         alias="WHISPER_PORT",
     )
 
+    LOG_LEVEL: str = Field(
+        "INFO",
+        description="Logging verbosity (DEBUG, INFO, WARNING, ERROR)",
+        alias="LOG_LEVEL",
+    )
+
     # DF_PATH: str = "df.pkl"
 
 

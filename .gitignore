@@ -10,3 +10,7 @@ wheels/
 .venv
 .env
 .pytest_cache
+*.png
+*.wav
+*.weba
+*.ipynb

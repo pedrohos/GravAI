@@ -1,5 +1,8 @@
 from config.settings import Settings
+from config.logging_config import get_logger
 from recording.providers.teams.provider import TeamsMeetingRecorder, stop_ws_audio_server
+
+logger = get_logger("recording.service")
 
 
 def start_ws_server(
@@ -9,6 +12,7 @@ def start_ws_server(
 	ws_server_path: str | None = None,
 ) -> None:
 	settings = Settings()
+	logger.info("Starting WS audio server")
 	TeamsMeetingRecorder.launch_ws_server(
 		output_dir or settings.SAVE_DIR,
 		ws_host or settings.WS_HOST,
@@ -18,6 +22,7 @@ def start_ws_server(
 
 
 def stop_ws_server() -> None:
+	logger.info("Stopping WS audio server")
 	stop_ws_audio_server()
 
 

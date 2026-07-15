@@ -30,8 +30,12 @@ COPY pyproject.toml uv.lock /app/
 
 RUN uv sync
 
-COPY . /app
-
-# Run this after container finished building
 RUN uv run playwright install-deps
 RUN uv run playwright install
+
+COPY api /app/api
+COPY config /app/config
+COPY models /app/models
+COPY recording /app/recording
+COPY slicing /app/slicing
+COPY transcribe /app/transcribe
