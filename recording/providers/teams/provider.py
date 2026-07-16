@@ -47,7 +47,7 @@ class MeetingRecorder(BaseModel):
         pass
 
     @abstractmethod
-    def setup_ws_server(self, meeting_url: str, ws_host: str, ws_port: int, session_id: str) -> tuple[str, str, list[dict], dict]:
+    def setup_ws_server(self, meeting_url: str, ws_host: str, ws_port: int, session_id: str) -> tuple[str, str, list[dict], dict, str]:
         pass
 
     def record_meeting_with_ws_audio_server(self, meeting_url: str, output_dir: str | None = None, ws_host: str | None = None, ws_port: int | None = None, debug: bool = False):
@@ -57,7 +57,9 @@ class MeetingRecorder(BaseModel):
         logger = get_logger("recording.teams", tracks_output_dir)
         logger.info(f"Setup complete for session {session_id} (meeting_url={meeting_url}, output_dir={tracks_output_dir})")
 
-        intercept_js, vad_observer_js, vad_events, vad_meta = self.setup_ws_server(
+        # The intercept_js and vad_obeserver_js are modified with the ws_url and injected in the browser
+        # they are responsible for recording and sending the audio packages to the WS server
+        intercept_js, vad_observer_js, vad_events, vad_meta, ws_url = self.setup_ws_server(
             meeting_url,
             ws_host or settings.WS_HOST,
             ws_port or settings.WS_PORT,
@@ -144,7 +146,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
         self.ws_audio_server_path = self.ws_audio_server_path or settings.WS_AUDIO_SERVER_PATH
         return self
 
-    def setup_ws_server(self, meeting_url: str, ws_host: str, ws_port: int, session_id: str) -> tuple[str, str, list[dict], dict]:
+    def setup_ws_server(self, meeting_url: str, ws_host: str, ws_port: int, session_id: str) -> tuple[str, str, list[dict], dict, str]:
         worklet_path = self.audio_worklet_js_path
         intercept_path = self.rtc_intercept_js_path
         vad_observer_path = self.vad_observer_js_path
@@ -167,7 +169,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
             "page_end_ms": None,
         }
 
-        return intercept_js, vad_observer_js, vad_events, vad_meta
+        return intercept_js, vad_observer_js, vad_events, vad_meta, ws_url    
 
     def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict):
         logger = get_logger("recording.teams", output_dir)

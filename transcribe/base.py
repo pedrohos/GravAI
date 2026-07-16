@@ -31,7 +31,7 @@ def transcribe_meeting_tracks(
         transcription_segments_output_path = wav_file_path.split(".")[0] + "_transcription_segments.txt"
         with open(transcription_text_output_path, "w") as f:
             f.write(transcription_text)
-        format_and_save_single_segment(Path(transcription_segments_output_path))
+        format_and_save_single_segment(Path(transcription_segments_output_path), transcription_segments)
 
         logger.info(f"Transcription finished for participant {participant_data.participant_name} (id: {participant_id})")
         tracks[participant_id] = ParticipantDataTransc(

@@ -45,14 +45,14 @@ async def record_meeting(meeting_url: str, slice_tracks: bool = True):
 
 
 @app.post("/record_meeting_and_transcribe")
-async def record_meeting_and_transcribe(meeting_url: str):
+async def record_meeting_and_transcribe(meeting_url: str, group_slices_by_name: bool = True):
     if "teams.live.com" not in meeting_url and "teams.microsoft.com" not in meeting_url:
         return json.dumps({"error": "Only Teams meetings are supported at the moment. Make sure the url contains 'teams.live.com'."})
 
     logger.info(f"Received /record_meeting_and_transcribe request for {meeting_url}")
     try:
         tracks_output_dir = service_record_meeting(meeting_url)
-        metadata_output_path, session = service_slice_track(tracks_output_dir)
+        metadata_output_path, session = service_slice_track(tracks_output_dir, group_slices_by_name)
         transc_session = service_transcribe_meeting_tracks(session)
     except Exception as e:
         logger.exception(f"/record_meeting_and_transcribe failed for {meeting_url}")
@@ -62,10 +62,10 @@ async def record_meeting_and_transcribe(meeting_url: str):
     return {"recording_path": tracks_output_dir, "session_metadata_path": metadata_output_path, "transcribed_slices_session": transc_session}
 
 @app.post("/transcribe")
-async def transcribe(tracks_output_dir: str):
+async def transcribe(tracks_output_dir: str, group_slices_by_name: bool = True):
     logger.info(f"Received /transcribe request for {tracks_output_dir}")
     try:
-        metadata_output_path, session = service_slice_track(tracks_output_dir)
+        metadata_output_path, session = service_slice_track(tracks_output_dir, group_slices_by_name)
         transc_session = service_transcribe_meeting_tracks(session)
     except Exception as e:
         logger.exception(f"/transcribe failed for {tracks_output_dir}")

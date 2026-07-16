@@ -13,6 +13,28 @@ from models.models import (
 from collections import defaultdict
 import time
 
+from config.logging_config import get_logger
+
+# The session sidecar is written by the ws audio server process only after it
+# finishes re-encoding the recorded track (ffmpeg pitch correction), which for
+# long meetings can take well over a second after the browser/session ends.
+_FILE_WAIT_TIMEOUT_S = 120.0
+_FILE_WAIT_POLL_INTERVAL_S = 0.5
+
+
+def _wait_for_file(path: str, label: str, log_dir: str, timeout: float = _FILE_WAIT_TIMEOUT_S) -> None:
+    if os.path.exists(path):
+        return
+    logger = get_logger("slicing", log_dir)
+    logger.info(f"Waiting for {label} file to be written: {path}")
+    deadline = time.time() + timeout
+    while not os.path.exists(path):
+        if time.time() >= deadline:
+            raise RuntimeError(f"Missing {label} file: {path}")
+        time.sleep(_FILE_WAIT_POLL_INTERVAL_S)
+    logger.info(f"{label} file is now available: {path}")
+
+
 def _load_json_or_raise(path: str, label: str) -> dict:
     if not os.path.exists(path):
         raise RuntimeError(f"Missing {label} file: {path}")
@@ -37,15 +59,9 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
             main_audio_track_name = candidate_f
             main_audio_track_name_sidecar_key = candidate_f[:candidate_f.find(".")].replace("track_", "")
             break
-        
-    if not os.path.exists(sidecar_path):
-        time.sleep(1)  # Wait a bit in case the file is still being written
-        if not os.path.exists(sidecar_path):
-            raise RuntimeError(f"Missing sidecar file: {sidecar_path}")
-    if not os.path.exists(vad_timeline_path):
-        time.sleep(1)  # Wait a bit in case the file is still being written
-        if not os.path.exists(vad_timeline_path):
-            raise RuntimeError(f"Missing VAD timeline file: {vad_timeline_path}")
+
+    _wait_for_file(sidecar_path, "session sidecar", slice_audio_tracks)
+    _wait_for_file(vad_timeline_path, "VAD timeline", slice_audio_tracks)
     assert main_audio_track_path is not None
 
     session_info = _load_json_or_raise(sidecar_path, "session sidecar")
@@ -68,15 +84,20 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
     )
     return session_data
 
-def _process_participant_data(session_data: SessionDataDTO):
+def _process_participant_data(session_data: SessionDataDTO, group_slices_by_name: bool = True) -> dict:
     all_participants_data = defaultdict(list)
+    logger = get_logger("slicing")
+    logger.info(f"Slicing participants data for session {session_data.session_id} (group_slices_by_name={group_slices_by_name})")
     for event in session_data.events:
-        all_participants_data[event.element_id].append({
+        target_key = event.participant_name if group_slices_by_name else event.element_id
+        all_participants_data[target_key].append({
             "class_count": event.class_count,
             "timestamp": event.timestamp,
             "participant_name": event.participant_name,
         })
         # print(f"{event.timestamp} - {event.participant_name} - {event.element_id} - classCount={event.class_count}")
+
+    logger.info(f"Sliced {len(all_participants_data)} participants data for session {session_data.session_id}")
     return all_participants_data
 
 def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data: dict) -> dict:
@@ -151,9 +172,9 @@ def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations
 
 class Slicer():
     @staticmethod
-    def slice_audio_tracks(audio_tracks_path: str):
+    def slice_audio_tracks(audio_tracks_path: str, group_slices_by_name: bool = True):
         session_data_dto = _extract_session_dto(audio_tracks_path)
-        all_participants_data = _process_participant_data(session_data_dto)
+        all_participants_data = _process_participant_data(session_data_dto, group_slices_by_name)
         participants_tracks_locations = _find_participant_tracks(session_data_dto, all_participants_data)
         _ffmpeg_slice(audio_tracks_path, session_data_dto, participants_tracks_locations)
 
@@ -165,8 +186,8 @@ class Slicer():
             }, f, default=str)
 
     @staticmethod
-    def slice_teams_audio_track(audio_tracks_path: str) -> Session:
-        Slicer.slice_audio_tracks(audio_tracks_path)
+    def slice_teams_audio_track(audio_tracks_path: str, group_slices_by_name: bool = True) -> Session:
+        Slicer.slice_audio_tracks(audio_tracks_path, group_slices_by_name)
         session = Slicer.create_session(audio_tracks_path)
         return session
     
