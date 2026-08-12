@@ -9,12 +9,9 @@ from src.gravai.transcribe.formatter import format_and_save_single_segment
 
 def transcribe_meeting_tracks(
         session: Session,
-        whisper_server_host: str | None = None,
-        whisper_server_port: int | None = None
+        whisper_host: str,
+        whisper_port: int
     ):
-    settings = Settings() # type: ignore
-    whisper_host = whisper_server_host or settings.WHISPER_HOST
-    whisper_port = whisper_server_port or settings.WHISPER_PORT
     log_dir = os.path.dirname(next(iter(session.tracks.values())).track.wav_file_path) if session.tracks else None
     logger = get_logger("transcribe", log_dir)
 
