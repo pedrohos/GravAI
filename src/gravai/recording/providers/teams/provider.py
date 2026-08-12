@@ -16,7 +16,7 @@ from pydantic import BaseModel, model_validator
 from src.gravai.config.settings import Settings
 from src.gravai.config.logging_config import get_logger
 from src.gravai.models.models import Session
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from src.gravai.recording.utils import _meeting_origin, _load_text, _write_vad_timeline
 from datetime import datetime
 
@@ -38,18 +38,18 @@ def stop_ws_audio_server() -> None:
                 pass
         _WS_PROC = None
 
-class MeetingRecorder(BaseModel):
+class MeetingRecorder(BaseModel, ABC):
     rtc_intercept_js_path: Path | None
     vad_observer_js_path: Path | None
     audio_worklet_js_path: Path | None
 
     @abstractmethod
     def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict):
-        pass
+        raise NotImplementedError("Subclasses must implement this method")
 
     @abstractmethod
     def setup_ws_server(self, meeting_url: str, ws_host: str, ws_port: int, session_id: str) -> tuple[str, str, list[dict], dict, str]:
-        pass
+        raise NotImplementedError("Subclasses must implement this method")
 
     def record_meeting_with_ws_audio_server(self, meeting_url: str, output_dir: str | None = None, ws_host: str | None = None, ws_port: int | None = None, debug: bool = False):
         settings = Settings() # type: ignore

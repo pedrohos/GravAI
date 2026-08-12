@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime
 import subprocess
-from models.models import (
+from src.gravai.models.models import (
     SessionDataDTO,
     TrackInfoDTO,
     ActionType,
@@ -13,7 +13,7 @@ from models.models import (
 from collections import defaultdict
 import time
 
-from config.logging_config import get_logger
+from src.gravai.config.logging_config import get_logger
 
 # The session sidecar is written by the ws audio server process only after it
 # finishes re-encoding the recorded track (ffmpeg pitch correction), which for
@@ -172,7 +172,7 @@ def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations
 
 class Slicer():
     @staticmethod
-    def slice_audio_tracks(audio_tracks_path: str, group_slices_by_name: bool = True):
+    def slice_audio_tracks_teams(audio_tracks_path: str, group_slices_by_name: bool = True):
         session_data_dto = _extract_session_dto(audio_tracks_path)
         all_participants_data = _process_participant_data(session_data_dto, group_slices_by_name)
         participants_tracks_locations = _find_participant_tracks(session_data_dto, all_participants_data)
@@ -186,9 +186,9 @@ class Slicer():
             }, f, default=str)
 
     @staticmethod
-    def slice_teams_audio_track(audio_tracks_path: str, group_slices_by_name: bool = True) -> Session:
-        Slicer.slice_audio_tracks(audio_tracks_path, group_slices_by_name)
-        session = Slicer.create_session(audio_tracks_path)
+    def slice_and_create_session_teams_audio_track(audio_tracks_path: str, group_slices_by_name: bool = True) -> Session:
+        Slicer.slice_audio_tracks_teams(audio_tracks_path, group_slices_by_name) # TODO: Add support for Google Meet slicing in the future
+        session = Slicer.create_session_teams(audio_tracks_path)
         return session
     
     @staticmethod
@@ -197,7 +197,7 @@ class Slicer():
             json.dump(session.model_dump(), f, default=str)
 
     @staticmethod
-    def create_session(audio_tracks_path: str):
+    def create_session_teams(audio_tracks_path: str):
         with open(os.path.join(audio_tracks_path, "slice_metadata.json"), "r") as f:
             metadata = json.load(f)
 

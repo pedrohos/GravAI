@@ -1,5 +1,7 @@
+from gravai.models.models import RecordingType
 from src.gravai.config.settings import Settings
 from src.gravai.config.logging_config import get_logger
+from src.gravai.recording.providers.teams.provider import MeetingRecorder
 from src.gravai.recording.providers.teams.provider import TeamsMeetingRecorder, stop_ws_audio_server
 from importlib import resources
 logger = get_logger("recording.service")
@@ -25,13 +27,21 @@ def stop_ws_server() -> None:
 
 
 def record_meeting(
+	recorder_type: RecordingType,
 	meeting_url: str,
 	output_dir: str | None = None,
 	ws_host: str | None = None,
 	ws_port: int | None = None,
 	debug: bool = False,
 ) -> str:
-	recorder = TeamsMeetingRecorder()
+	match recorder_type:
+		case RecordingType.TEAMS:
+			recorder = TeamsMeetingRecorder()
+		case RecordingType.MEET:
+			raise NotImplementedError("Google Meet recording is not implemented yet.")
+		case _:
+			raise ValueError(f"Unsupported recorder type: {recorder_type}")
+		
 	return recorder.record_meeting_with_ws_audio_server(
 		meeting_url,
 		output_dir=output_dir,

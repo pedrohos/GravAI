@@ -9,6 +9,10 @@ class Singleton(object):
             cls._instances[cls] = super(Singleton, cls).__new__(cls, *args, **kwargs)
         return cls._instances[cls]
 
+class RecordingType(Enum):
+    TEAMS = "teams"
+    MEET = "meet"
+
 class ActionType(Enum):
     START = 0
     END = 1
