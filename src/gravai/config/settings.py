@@ -1,7 +1,9 @@
-from pydantic import Field
+from importlib import resources
+from pathlib import Path
+
+from pydantic import Field, FilePath
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from models.models import Singleton
-import os 
+from src.gravai.models.models import Singleton
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,25 +32,9 @@ class Settings(BaseSettings, Singleton):
         alias="SAVE_DIR",
     )
 
-    RTC_INTERCEPT_JS_PATH: str = Field(
-        default_factory=lambda: os.path.join(os.path.dirname(__file__), "..", "recording", "common", "rtc_intercept.js"),
-        description="Path to the RTC intercept JavaScript file",
-    )
-
-    VAD_OBSERVER_TEAMS_JS_PATH: str = Field(
-        default_factory=lambda: os.path.join(os.path.dirname(__file__), "..", "recording", "providers", "teams", "vad_observer.js"),
-        description="Path to the VAD observer JavaScript file",
-    )
-
-    AUDIO_WORKLET_JS_PATH: str = Field(
-        default_factory=lambda: os.path.join(os.path.dirname(__file__), "..", "recording", "common", "audio_worklet_processor.js"),
-        description="Path to the Audio Worklet JavaScript file",
-    )
-
-    WS_AUDIO_SERVER_PATH: str = Field(
-        default_factory=lambda: os.path.join(os.path.dirname(__file__), "..", "recording", "ws_audio_server.py"),
-        description="Path to the WebSocket audio server Python file",
-    )
+    RTC_INTERCEPT_JS_PATH: FilePath = str(resources.files("gravai.recording") / "common" / "rtc_intercept.js")
+    VAD_OBSERVER_TEAMS_JS_PATH: FilePath = str(resources.files("gravai.recording") / "providers" / "teams" / "vad_observer.js")
+    AUDIO_WORKLET_JS_PATH: FilePath = str(resources.files("gravai.recording") / "common" / "audio_worklet_processor.js")
 
     WHISPER_HOST: str = Field(
         ...,

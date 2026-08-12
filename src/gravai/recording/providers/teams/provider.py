@@ -1,6 +1,7 @@
 import argparse
 import time
 from urllib.parse import urlparse
+from pathlib import Path
 from playwright.sync_api import sync_playwright
 import multiprocessing as mp
 from multiprocessing import Process, Queue
@@ -12,11 +13,11 @@ import threading
 from uuid import uuid4
 from pydantic import BaseModel, model_validator
 
-from config.settings import Settings
-from config.logging_config import get_logger
-from models.models import Session
+from src.gravai.config.settings import Settings
+from src.gravai.config.logging_config import get_logger
+from src.gravai.models.models import Session
 from abc import abstractmethod
-from recording.utils import _meeting_origin, _load_text, _write_vad_timeline
+from src.gravai.recording.utils import _meeting_origin, _load_text, _write_vad_timeline
 from datetime import datetime
 
 _WS_PROC: subprocess.Popen | None = None
@@ -38,9 +39,9 @@ def stop_ws_audio_server() -> None:
         _WS_PROC = None
 
 class MeetingRecorder(BaseModel):
-    rtc_intercept_js_path: str | None
-    vad_observer_js_path: str | None
-    audio_worklet_js_path: str | None
+    rtc_intercept_js_path: Path | None
+    vad_observer_js_path: Path | None
+    audio_worklet_js_path: Path | None
 
     @abstractmethod
     def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict):
@@ -117,24 +118,25 @@ class MeetingRecorder(BaseModel):
         return session_id, tracks_output_dir, q, output_dir
         
     @staticmethod
-    def launch_ws_server(output_dir, ws_host, ws_port, ws_server_path):
+    def launch_ws_server(output_dir, ws_host, ws_port):
         os.makedirs(output_dir, exist_ok=True)
         global _WS_PROC
         with _WS_LOCK:
             if not _ws_proc_alive(_WS_PROC):
                 _WS_PROC = subprocess.Popen([
                     sys.executable,
-                    ws_server_path,
+                    "-m",
+                    "gravai.recording.ws_audio_server",
                     "--host", ws_host,
                     "--port", str(ws_port),
                     "--output_dir", output_dir,
                 ])
 
 class TeamsMeetingRecorder(MeetingRecorder):
-    rtc_intercept_js_path: str | None = None
-    vad_observer_js_path: str | None = None
-    audio_worklet_js_path: str | None = None
-    ws_audio_server_path: str | None = None
+    rtc_intercept_js_path: Path | None = None
+    vad_observer_js_path: Path | None = None
+    audio_worklet_js_path: Path | None = None
+    ws_audio_server_path: Path | None = None
 
     @model_validator(mode="after")
     def assemble_es_hosts(self) -> "TeamsMeetingRecorder":
@@ -143,7 +145,6 @@ class TeamsMeetingRecorder(MeetingRecorder):
         self.audio_worklet_js_path = self.audio_worklet_js_path or settings.AUDIO_WORKLET_JS_PATH
         self.rtc_intercept_js_path = self.rtc_intercept_js_path or settings.RTC_INTERCEPT_JS_PATH
         self.vad_observer_js_path = self.vad_observer_js_path or settings.VAD_OBSERVER_TEAMS_JS_PATH
-        self.ws_audio_server_path = self.ws_audio_server_path or settings.WS_AUDIO_SERVER_PATH
         return self
 
     def setup_ws_server(self, meeting_url: str, ws_host: str, ws_port: int, session_id: str) -> tuple[str, str, list[dict], dict, str]:
