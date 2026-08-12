@@ -4,17 +4,17 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from api.app import record_meeting_and_transcribe as api_record_meeting_and_transcribe
-from transcribe.base import transcribe_meeting_tracks
+from src.gravai.api.app import record_meeting_and_transcribe as api_record_meeting_and_transcribe
+from src.gravai.transcribe.base import transcribe_meeting_tracks
 # from main import main
 
-from recording.service import record_meeting as service_record_meeting
-from recording.service import start_ws_server as service_record_start_ws_server
-from recording.service import stop_ws_server as service_record_stop_ws_server
+from src.gravai.recording.service import record_meeting as service_record_meeting
+from src.gravai.recording.service import start_ws_server as service_record_start_ws_server
+from src.gravai.recording.service import stop_ws_server as service_record_stop_ws_server
 
-from slicing.service import slice_track as service_slice_track
+from src.gravai.slicing.service import slice_track as service_slice_track
 
-from transcribe.service import transcribe_meeting_tracks as service_transcribe_meeting_tracks
+from src.gravai.transcribe.service import transcribe_meeting_tracks as service_transcribe_meeting_tracks
 
 def test_record_meeting_and_transcribe():
     url = "" # Insert URL of teams here

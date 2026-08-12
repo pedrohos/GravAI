@@ -1,5 +1,5 @@
-from models.models import Session
-from transcribe.base import transcribe_meeting_tracks as transcribe_meeting_tracks_base
+from src.gravai.models.models import Session
+from src.gravai.transcribe.base import transcribe_meeting_tracks as transcribe_meeting_tracks_base
 
 def transcribe_meeting_tracks(
         session: Session,

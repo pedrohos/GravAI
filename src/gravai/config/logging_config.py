@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 
-from config.settings import Settings
+from src.gravai.config.settings import Settings
 
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
