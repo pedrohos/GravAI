@@ -19,9 +19,6 @@
                 "ms-python.python"
             ],
             "settings": {
-                "python.testing.pytestArgs": [
-                    "."
-                ],
                 "python.testing.unittestEnabled": false,
                 "python.testing.pytestEnabled": true,
                 "python.formatting.provider": "black",
