@@ -19,6 +19,8 @@ dependencies = [
     "websockets>=16.0",
     "opuslib>=3.0.1",
     "requests>=2.34.2",
+    "pydantic-settings>=2.14.1",
+    "python-dotenv>=1.2.2",
 ]
 
 [dependency-groups]

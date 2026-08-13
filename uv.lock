@@ -312,6 +312,8 @@ dependencies = [
     { name = "opuslib" },
     { name = "playwright" },
     { name = "pyaudio" },
+    { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "requests" },
     { name = "websockets" },
 ]
@@ -328,6 +330,8 @@ requires-dist = [
     { name = "opuslib", specifier = ">=3.0.1" },
     { name = "playwright" },
     { name = "pyaudio", specifier = ">=0.2.14" },
+    { name = "pydantic-settings", specifier = ">=2.14.1" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "websockets", specifier = ">=16.0" },
 ]

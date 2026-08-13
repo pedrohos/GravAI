@@ -5,37 +5,19 @@ from gravai.models.models import (
     Session,
     TranscriptedSession,
 )
+from gravai.registry import UnsupportedMeetingURL, detect_recording_type
 from gravai.recording.service import record_meeting as service_record_meeting
 from gravai.slicing.service import slice_track as service_slice_track
 from gravai.transcribe.service import (
     transcribe_meeting_tracks as service_transcribe_meeting_tracks,
 )
 
+# Re-exported so callers keep importing URL detection and its error from the
+# pipeline; the registry owns both.
+__all__ = ["UnsupportedMeetingURL", "detect_recording_type", "record",
+           "record_and_transcribe", "transcribe_tracks"]
+
 logger = get_logger("api.pipeline")
-
-# Substrings that identify which provider a meeting URL belongs to. Adding a
-# provider means adding an entry here plus its branch in the services.
-_URL_MARKERS: dict[RecordingType, tuple[str, ...]] = {
-    RecordingType.TEAMS: ("teams.live.com", "teams.microsoft.com"),
-    RecordingType.MEET: ("meet.google.com",),
-}
-
-
-class UnsupportedMeetingURL(ValueError):
-    """Raised when no known provider matches the given meeting URL."""
-
-
-def detect_recording_type(meeting_url: str) -> RecordingType:
-    for recording_type, markers in _URL_MARKERS.items():
-        if any(marker in meeting_url for marker in markers):
-            return recording_type
-
-    supported = ", ".join(
-        marker for markers in _URL_MARKERS.values() for marker in markers
-    )
-    raise UnsupportedMeetingURL(
-        f"No provider matches {meeting_url!r}. Supported meeting URLs contain: {supported}."
-    )
 
 
 def record(

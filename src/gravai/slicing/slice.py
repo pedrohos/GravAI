@@ -11,9 +11,26 @@ from gravai.models.models import (
     Session
 )
 from collections import defaultdict
+from pathlib import Path
 import time
+from glob import glob
 
 from gravai.config.logging_config import get_logger
+
+
+def _participant_track_path(audio_tracks_path: str, participant_id: str) -> str:
+    """Path of a participant's sliced track.
+
+    When slices are grouped by name the id is a display name the participant
+    typed, so it has to be sanitized before it goes in a filename - a '/' would
+    otherwise point at a directory that does not exist. Both the writer and the
+    reader go through here so they cannot disagree.
+
+    Mirrors _sanitize_name in the ws audio server; they cover different id
+    namespaces, so they are deliberately not shared.
+    """
+    safe_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in participant_id)
+    return os.path.join(audio_tracks_path, f"track_{safe_id}.wav")
 
 # The ws audio server rewrites the session sidecar once per track, from each
 # track's connection handler, after re-encoding that track (ffmpeg pitch
@@ -96,20 +113,24 @@ def _load_json_or_raise(path: str, label: str) -> dict:
 def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
     sidecar_path = os.path.join(slice_audio_tracks, "session_sidecar.json")
     vad_timeline_path = os.path.join(slice_audio_tracks, "vad_timeline.json")
-    main_audio_track_path = None
-    main_audio_track_name = None
-    main_audio_track_name_sidecar_key = None
-    for candidate_f in os.listdir(slice_audio_tracks):
-        if candidate_f.startswith("track_mainAudio"):
-            main_audio_track_path = os.path.join(slice_audio_tracks, candidate_f)
-            main_audio_track_name = candidate_f
-            main_audio_track_name_sidecar_key = candidate_f[:candidate_f.find(".")].replace("track_", "")
-            break
-
-    if not main_audio_track_path:
+    # Sorted so the choice is reproducible, and more than one is rejected rather
+    # than silently picked between - a second main track means tracks from two
+    # sessions landed in one directory, and slicing the wrong one is unrecoverable.
+    main_track_candidates = sorted(glob(os.path.join(slice_audio_tracks, "track_mainAudio*.wav")))
+    if not main_track_candidates:
         raise RuntimeError(f"Missing main audio track in {slice_audio_tracks}")
+    if len(main_track_candidates) > 1:
+        raise RuntimeError(
+            f"Expected exactly one main audio track in {slice_audio_tracks}, found "
+            f"{len(main_track_candidates)}: {[os.path.basename(p) for p in main_track_candidates]}"
+        )
 
-    assert main_audio_track_name_sidecar_key is not None
+    main_audio_track_path = main_track_candidates[0]
+    main_audio_track_name = os.path.basename(main_audio_track_path)
+    # `track_mainAudio-90205.wav` -> `mainAudio-90205`, the key the ws audio
+    # server writes into the sidecar.
+    main_audio_track_name_sidecar_key = Path(main_audio_track_name).stem.removeprefix("track_")
+
     session_info = _wait_for_finalized_sidecar(
         sidecar_path, main_audio_track_name_sidecar_key, slice_audio_tracks
     )
@@ -182,9 +203,8 @@ def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations
     participants_tracks_path = {}
     # Create an audio track that is the same size as the main track original and put zero audio outside of the desired track from the participant (so only the participant audio is present in the track, but it is aligned with the main track timeline)
     for participant_id, track_changes in participants_tracks_locations.items():
-        participant_track_path = os.path.join(audio_tracks_path, f"track_{participant_id}.wav")
+        participant_track_path = _participant_track_path(audio_tracks_path, participant_id)
         main_track_path = os.path.join(audio_tracks_path, session_data.main_track_name)
-        print(track_changes)
         segments = []
         start_time = None
         for change in track_changes:
@@ -258,7 +278,7 @@ class Slicer():
         session_tracks = {}
         for participant_id, track_changes in participants_tracks_locations.items():
             participant_name = all_participants_data[participant_id][0]["participant_name"]
-            participant_track_path = os.path.join(audio_tracks_path, f"track_{participant_id}.wav")
+            participant_track_path = _participant_track_path(audio_tracks_path, participant_id)
             session_tracks[participant_id] = ParticipantData(
                 participant_id=participant_id,
                 participant_name=participant_name,

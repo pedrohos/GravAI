@@ -1,10 +1,6 @@
 import pytest
-import sys
-import os
 
 from gravai.models.models import RecordingType
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from gravai.api.pipeline import record_and_transcribe  as api_record_meeting_and_transcribe
 from gravai.transcribe.base import transcribe_meeting_tracks
@@ -19,7 +15,12 @@ from gravai.transcribe.service import transcribe_meeting_tracks as service_trans
 
 @pytest.fixture(scope="module", autouse=True)
 def up_audio_worker():
-    service_record_start_ws_server()
+    try:
+        service_record_start_ws_server()
+        yield
+    finally:
+        service_record_stop_ws_server()
+
 
 def test_record_meeting_and_transcribe(up_audio_worker):
     url = "" # Insert URL of teams here

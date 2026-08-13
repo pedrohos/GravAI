@@ -26,14 +26,9 @@ ENV PATH="/app/.venv/bin:${PATH}"
 
 COPY pyproject.toml uv.lock /app/
 
+COPY src /app/src
+
 RUN uv sync
 
 RUN uv run playwright install-deps
 RUN uv run playwright install
-
-COPY api /app/api
-COPY config /app/config
-COPY models /app/models
-COPY recording /app/recording
-COPY slicing /app/slicing
-COPY transcribe /app/transcribe
