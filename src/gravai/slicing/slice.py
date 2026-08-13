@@ -15,9 +15,10 @@ import time
 
 from gravai.config.logging_config import get_logger
 
-# The session sidecar is written by the ws audio server process only after it
-# finishes re-encoding the recorded track (ffmpeg pitch correction), which for
-# long meetings can take well over a second after the browser/session ends.
+# The ws audio server rewrites the session sidecar once per track, from each
+# track's connection handler, after re-encoding that track (ffmpeg pitch
+# correction) - which for long meetings takes well over a second. So the sidecar
+# existing only proves that *some* track finished, not the one we need.
 _FILE_WAIT_TIMEOUT_S = 120.0
 _FILE_WAIT_POLL_INTERVAL_S = 0.5
 
@@ -33,6 +34,51 @@ def _wait_for_file(path: str, label: str, log_dir: str, timeout: float = _FILE_W
             raise RuntimeError(f"Missing {label} file: {path}")
         time.sleep(_FILE_WAIT_POLL_INTERVAL_S)
     logger.info(f"{label} file is now available: {path}")
+
+
+def _wait_for_finalized_sidecar(
+    path: str,
+    main_track_key: str,
+    log_dir: str,
+    timeout: float = _FILE_WAIT_TIMEOUT_S,
+) -> dict:
+    """Waits until the sidecar records ended_at for the main track.
+
+    ended_at is the last field written for a track, so its presence is what
+    marks that track's audio as complete - unlike the file merely existing,
+    which any other track's handler may have caused.
+    """
+    logger = get_logger("slicing", log_dir)
+    deadline = time.time() + timeout
+    announced = False
+
+    while True:
+        session_info = None
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    session_info = json.load(f)
+            except json.JSONDecodeError:
+                session_info = None  # caught mid-rewrite, poll again
+
+        if session_info is not None:
+            track = session_info.get("tracks", {}).get(main_track_key, {})
+            if "ended_at" in track:
+                if announced:
+                    logger.info(f"Session sidecar finalized for main track {main_track_key}")
+                return session_info
+
+        if time.time() >= deadline:
+            raise RuntimeError(
+                f"Timed out after {timeout:.0f}s waiting for session sidecar {path} to record "
+                f"ended_at for main track {main_track_key!r}. The ws audio server may still be "
+                f"re-encoding, or it died before closing the track."
+            )
+
+        if not announced:
+            logger.info(f"Waiting for session sidecar to finalize main track {main_track_key}: {path}")
+            announced = True
+        time.sleep(_FILE_WAIT_POLL_INTERVAL_S)
 
 
 def _load_json_or_raise(path: str, label: str) -> dict:
@@ -63,11 +109,12 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
     if not main_audio_track_path:
         raise RuntimeError(f"Missing main audio track in {slice_audio_tracks}")
 
-    _wait_for_file(sidecar_path, "session sidecar", slice_audio_tracks)
+    assert main_audio_track_name_sidecar_key is not None
+    session_info = _wait_for_finalized_sidecar(
+        sidecar_path, main_audio_track_name_sidecar_key, slice_audio_tracks
+    )
     _wait_for_file(vad_timeline_path, "VAD timeline", slice_audio_tracks)
-    assert main_audio_track_path is not None
 
-    session_info = _load_json_or_raise(sidecar_path, "session sidecar")
     vad_timeline = _load_json_or_raise(vad_timeline_path, "VAD timeline")
 
     session_data = SessionDataDTO(

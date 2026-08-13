@@ -12,7 +12,9 @@ import shutil
 import subprocess
 
 import websockets
+from threading import Lock
 
+sidecar_write_mutex = Lock()
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -20,6 +22,24 @@ def _utc_now() -> str:
 
 def _sanitize_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in value)
+
+
+def _write_sidecar(sidecar_path: str, session_info: dict) -> None:
+    # Rewritten as each track's handler closes, while the slicer may be reading
+    # it. Write to a temp file and rename so a reader never sees a truncated one.
+    fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(sidecar_path) or ".", prefix=".session_sidecar_", suffix=".json"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(session_info, f, indent=2)
+        os.replace(tmp_path, sidecar_path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _float32_to_pcm16(payload: bytes) -> bytes:
@@ -166,14 +186,20 @@ def run_server(host: str, port: int, base_output_dir: str, default_session_id: s
                     writer.write_float32(message)
         finally:
             if writer:
-                writer.close()
+                # Close the writer in another thread to avoid blocking the event loop, since it runs ffmpeg,
+                # thus the websocket will be able to handle (multiple) concurrent connections when multiple
+                # records are being done simultaneously. 
+                # Note that this means the track may not be fully written when the client disconnects,
+                # but the slicer will wait for the sidecar to be updated before slicing.
+                await asyncio.to_thread(writer.close)
                 if session_info is not None:
                     track = session_info["tracks"].get(track_id, {})
                     track["ended_at"] = _utc_now()
                     session_info["tracks"][track_id] = track
             if session_info is not None and sidecar_path is not None:
-                with open(sidecar_path, "w", encoding="utf-8") as f:
-                    json.dump(session_info, f, indent=2)
+                # Avoid race conditions when multiple tracks are being written at the same time
+                with sidecar_write_mutex:
+                    _write_sidecar(sidecar_path, session_info)
 
     async def run() -> None:
         async with websockets.serve(handler, host, port, max_size=None):

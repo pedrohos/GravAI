@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from gravai.api import pipeline
 from gravai.api.schemas import RecordMeetingResponse, TranscribeResponse
 from gravai.config.logging_config import get_logger
+from gravai.transcribe.errors import WhisperError
 
 logger = get_logger("api.meetings")
 
@@ -24,6 +25,11 @@ def _handled(operation: str, target: str):
     except NotImplementedError as exc:
         logger.warning(f"{operation} unsupported for {target}: {exc}")
         raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except WhisperError as exc:
+        # Upstream transcription service failed - this request was fine, so it
+        # reports as a gateway failure rather than an error in this service.
+        logger.error(f"{operation} failed for {target}: {exc}")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception(f"{operation} failed for {target}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc

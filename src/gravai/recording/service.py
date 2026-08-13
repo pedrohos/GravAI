@@ -34,6 +34,11 @@ def record_meeting(
     ws_port: int | None = None,
     debug: bool = False,
 ) -> str:
+    settings = get_settings()
+    debug = debug or settings.DEBUG_GRAVAI
+    logger.info(f"Recording meeting from {meeting_url} with recorder type {recorder_type}")
+    logger.info(f"Debug mode is {'enabled' if debug else 'disabled'}")
+    
     match recorder_type:
         case RecordingType.TEAMS:
             recorder = TeamsMeetingRecorder()

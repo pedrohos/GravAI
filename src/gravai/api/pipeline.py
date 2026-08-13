@@ -1,4 +1,4 @@
-from gravai.config.logging_config import get_logger
+from gravai.config.logging_config import get_logger, release_session_logs
 from gravai.models.models import (
     ParticipantData,
     RecordingType,
@@ -45,11 +45,14 @@ def record(
     recording_type = detect_recording_type(meeting_url)
 
     tracks_output_dir = service_record_meeting(recording_type, meeting_url)
-    if not slice_tracks:
-        return tracks_output_dir, None, None
+    try:
+        if not slice_tracks:
+            return tracks_output_dir, None, None
 
-    metadata_output_path, session = service_slice_track(recording_type, tracks_output_dir)
-    return tracks_output_dir, metadata_output_path, session
+        metadata_output_path, session = service_slice_track(recording_type, tracks_output_dir)
+        return tracks_output_dir, metadata_output_path, session
+    finally:
+        release_session_logs(tracks_output_dir)
 
 
 def record_and_transcribe(
@@ -72,8 +75,13 @@ def transcribe_tracks(
     recording_type: RecordingType = RecordingType.TEAMS,
     group_slices_by_name: bool = True,
 ) -> tuple[str, TranscriptedSession]:
-    metadata_output_path, session = service_slice_track(
-        recording_type, tracks_output_dir, group_slices_by_name
-    )
-    transc_session = service_transcribe_meeting_tracks(session)
-    return metadata_output_path, transc_session
+    try:
+        metadata_output_path, session = service_slice_track(
+            recording_type, tracks_output_dir, group_slices_by_name
+        )
+        transc_session = service_transcribe_meeting_tracks(session)
+        return metadata_output_path, transc_session
+    finally:
+        # Closes this session's log file. Safe when reached from
+        # record_and_transcribe: nothing logs against the session after this.
+        release_session_logs(tracks_output_dir)

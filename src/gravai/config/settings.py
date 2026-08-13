@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     """Application configuration from environment variables"""
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
+    DEBUG_GRAVAI: bool = Field(
+        False,
+        description="Enable debug mode",
+        alias="DEBUG_GRAVAI",
+    )
+
     WS_HOST: str = Field(
         "127.0.0.1",
         min_length=1,

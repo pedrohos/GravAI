@@ -2,7 +2,10 @@ from pathlib import Path
 import json, ast
 
 
-def format_and_save_single_segment(file_path: Path, content: str | list | dict) -> None:
+def format_and_save_single_segment(file_path: Path, content: str | list | dict) -> Path:
+    """
+    Writes the segments as JSON and returns the path actually written.
+    """
     # Content may already be parsed data (e.g. passed in-process straight from
     # the whisper response) or the string repr of it read back from a file -
     # only the latter needs literal-eval parsing.
@@ -17,11 +20,13 @@ def format_and_save_single_segment(file_path: Path, content: str | list | dict) 
     # Write as formatted JSON
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(segments, f, indent=2, ensure_ascii=False)
-    
-    file_path.rename(file_path.with_suffix('.json'))
-    
-    print(f"{file_path.name} ({len(segments)} segments)")
-    
+
+    output_path = file_path.with_suffix('.json')
+    file_path.rename(output_path)
+
+    print(f"{output_path.name} ({len(segments)} segments)")
+    return output_path
+
 
 def format_transcription_segments(str_path: str) -> None:
     

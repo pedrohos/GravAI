@@ -1,4 +1,4 @@
-import argparse
+import queue
 import time
 from urllib.parse import urlparse
 from pathlib import Path
@@ -14,7 +14,7 @@ from uuid import uuid4
 from pydantic import BaseModel, model_validator
 
 from gravai.config.settings import get_settings
-from gravai.config.logging_config import get_logger
+from gravai.config.logging_config import get_logger, release_session_logs
 from gravai.models.models import Session
 from abc import ABC, abstractmethod
 from gravai.recording.utils import _meeting_origin, _load_text, _write_vad_timeline
@@ -22,6 +22,10 @@ from datetime import datetime
 
 _WS_PROC: subprocess.Popen | None = None
 _WS_LOCK = threading.Lock()
+
+# Only reached when the recording process died without reporting a result, so
+# this is a short backstop before giving up - not a wait on the recording itself.
+_RESULT_QUEUE_TIMEOUT_S = 30.0
 
 
 def _ws_proc_alive(proc: subprocess.Popen | None) -> bool:
@@ -58,40 +62,69 @@ class MeetingRecorder(BaseModel, ABC):
         logger = get_logger("recording.teams", tracks_output_dir)
         logger.info(f"Setup complete for session {session_id} (meeting_url={meeting_url}, output_dir={tracks_output_dir})")
 
-        # The intercept_js and vad_obeserver_js are modified with the ws_url and injected in the browser
-        # they are responsible for recording and sending the audio packages to the WS server
-        intercept_js, vad_observer_js, vad_events, vad_meta, ws_url = self.setup_ws_server(
-            meeting_url,
-            ws_host or settings.WS_HOST,
-            ws_port or settings.WS_PORT,
-            session_id,
-        )
-
-        logger.info(f"Starting intercept mode session {session_id} -> {tracks_output_dir}")
-        p_join_browser = mp.Process(
-            target=self.record_meeting,
-            args=(meeting_url, q, tracks_output_dir, debug, intercept_js, vad_observer_js, vad_events, vad_meta),
-        )
-
-        p_join_browser.start()
-
         try:
-            p_join_browser.join()
-        except KeyboardInterrupt:
-            logger.warning("Keyboard interrupt received, signaling recording process to stop...")
-            q.put(("keyboard_interrupt", None))
-            p_join_browser.join()
+            # The intercept_js and vad_obeserver_js are modified with the ws_url and injected in the browser
+            # they are responsible for recording and sending the audio packages to the WS server
+            intercept_js, vad_observer_js, vad_events, vad_meta, ws_url = self.setup_ws_server(
+                meeting_url,
+                ws_host or settings.WS_HOST,
+                ws_port or settings.WS_PORT,
+                session_id,
+            )
 
-        res = q.get_nowait()
-        res_type, message = res
-        if res_type == "stop":
-            logger.info(f"Recording finished successfully for session {session_id}")
-            return tracks_output_dir
-        elif res_type == "exception":
-            logger.error(f"Recording process raised an exception for session {session_id}: {message}")
-            raise RuntimeError(f"Recording process raised an exception: {message}")
-        logger.error(f"Recording process for session {session_id} did not report a start/stop signal")
-        raise RuntimeError("Did not receive expected start/stop signals from recording process.")
+            logger.info(f"Starting intercept mode session {session_id} -> {tracks_output_dir}")
+            p_join_browser = mp.Process(
+                target=self.record_meeting,
+                args=(meeting_url, q, tracks_output_dir, debug, intercept_js, vad_observer_js, vad_events, vad_meta),
+            )
+
+            p_join_browser.start()
+
+            interrupted = False
+            try:
+                p_join_browser.join()
+            except KeyboardInterrupt:
+                logger.warning("Keyboard interrupt received, waiting for recording process to stop...")
+                interrupted = True
+                p_join_browser.join()
+
+            try:
+                # A child that exits normally flushes its queue before terminating,
+                # so after join() the result is already there. The timeout only
+                # matters when the child was killed and will never report at all -
+                # blocking forever there would hang the request.
+                res_type, message = q.get(timeout=_RESULT_QUEUE_TIMEOUT_S)
+            except queue.Empty:
+                exitcode = p_join_browser.exitcode
+                if interrupted:
+                    raise RuntimeError(
+                        f"Recording for session {session_id} was interrupted before it reported a result."
+                    )
+                logger.error(
+                    f"Recording process for session {session_id} exited with code {exitcode} "
+                    f"without reporting a result"
+                )
+                raise RuntimeError(
+                    f"Recording process died before reporting a result (exit code {exitcode}). "
+                    f"Check {tracks_output_dir}/session.log and the process' stderr."
+                ) from None
+
+            if res_type == "stop":
+                logger.info(f"Recording finished successfully for session {session_id}")
+                return tracks_output_dir
+            elif res_type == "exception":
+                logger.error(f"Recording process raised an exception for session {session_id}: {message}")
+                raise RuntimeError(f"Recording process raised an exception: {message}")
+            logger.error(
+                f"Recording process for session {session_id} reported an unexpected result: {res_type!r}"
+            )
+            raise RuntimeError(f"Unexpected result from recording process: {res_type!r}")
+        except BaseException:
+            # On success the pipeline releases this session's log file once slicing
+            # and transcription are done. When recording fails the caller never
+            # learns the directory, so it has to be released here.
+            release_session_logs(tracks_output_dir)
+            raise
 
 
     def setup(self, output_dir: str):
@@ -267,38 +300,44 @@ class TeamsMeetingRecorder(MeetingRecorder):
                     if new_events:
                         vad_events.extend(new_events)
 
+                # call_timer_locator = page.locator("span[data-tid='call-duration']")
                 ended_span_locator = page.locator("span:has-text('Did you leave by mistake?')")
                 removed_h1_locator = page.locator("h1:has-text(\"You've been removed from this meeting\")")
-                rejected_h1_locator = page.locator("h1[id='calling-retry-screen-title']")
+                retry_h1_locator = page.locator("h1[id='calling-retry-screen-title']")
 
                 deadline = time.time() + 7_200
+                activity_timeout = 600  # 10 minutes
 
                 last_vad_event_time_update = time.time()
                 last_vad_event_count = 0
-                joined_meeting_logged = False
+                joined_meeting = False
                 while True:
                     _drain_vad_events()
                     try:
-                        rejected_h1_locator.wait_for(state="visible", timeout=200)
-                    except Exception:
-                        pass
-                    else:
-                        logger.error("Entry to the meeting was rejected/denied by the host")
-                        raise Exception("Rejected from joining the meeting")
-
-                    try:
+                        # Updates last 'activity detected' timestamp. New events implies the meeting is still ongoing
+                        # and the bot was not left by himself on the meeting
                         if len(vad_events) != last_vad_event_count:
-                            if not joined_meeting_logged:
+                            if not joined_meeting:
                                 logger.info("Audio activity detected: successfully joined the meeting and started recording")
-                                joined_meeting_logged = True
+                                joined_meeting = True
                             last_vad_event_time_update = time.time()
                             last_vad_event_count = len(vad_events)
                         # Checks for inactivity in VAD events to determine if the meeting has likely ended,
                         # as a fallback in case the end-of-meeting indicators are not detected
-                        elif time.time() - last_vad_event_time_update > 4200:
+                        elif time.time() - last_vad_event_time_update > activity_timeout:
                             logger.info("No audio activity detected for a prolonged period, assuming meeting ended")
                             break
+                        else:
+                            # Check if the meeting was rejected by the host, which can happen if the bot is not allowed to join
+                            try:
+                                retry_h1_locator.wait_for(state="visible", timeout=200)
+                                if not joined_meeting:
+                                    logger.error("Entry to the meeting was denied by the host")
+                                    raise Exception("Rejected from joining the meeting")
+                            except Exception:
+                                pass
 
+                        # Check for meeting end indicators (the meeting ended or it was removed)
                         ended_span_locator.or_(removed_h1_locator).wait_for(state="visible", timeout=1000)
                         logger.info("Meeting end detected (left the meeting or was removed)")
                         break

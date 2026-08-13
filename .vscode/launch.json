@@ -11,7 +11,7 @@
             "module": "fastapi",
             "args": [
                 "run",
-                "api/app.py"
+                "src/gravai/api/app.py"
             ],
             "python": "${workspaceFolder}/.venv/bin/python",
             "console": "integratedTerminal",
@@ -25,7 +25,8 @@
             "request": "launch",
             "module": "pytest",
             "args": [
-                "${workspaceFolder}"
+                "-s",
+                "tests"
             ],
             "python": "${workspaceFolder}/.venv/bin/python",
             "console": "integratedTerminal",
@@ -35,7 +36,7 @@
         {
             "name": "Python Debugger: Test",
             "type": "debugpy",
-            // "request": "attatch",
+            "request": "launch",
             "python": "${workspaceFolder}/.venv/bin/python",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
