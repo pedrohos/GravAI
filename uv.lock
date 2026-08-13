@@ -305,16 +305,20 @@ wheels = [
 [[package]]
 name = "gravai"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
     { name = "opuslib" },
     { name = "playwright" },
     { name = "pyaudio" },
-    { name = "pytest" },
     { name = "requests" },
     { name = "websockets" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
 ]
 
 [package.metadata]
@@ -324,10 +328,12 @@ requires-dist = [
     { name = "opuslib", specifier = ">=3.0.1" },
     { name = "playwright" },
     { name = "pyaudio", specifier = ">=0.2.14" },
-    { name = "pytest", specifier = ">=9.0.2" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "websockets", specifier = ">=16.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "greenlet"

@@ -60,6 +60,9 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
             main_audio_track_name_sidecar_key = candidate_f[:candidate_f.find(".")].replace("track_", "")
             break
 
+    if not main_audio_track_path:
+        raise RuntimeError(f"Missing main audio track in {slice_audio_tracks}")
+
     _wait_for_file(sidecar_path, "session sidecar", slice_audio_tracks)
     _wait_for_file(vad_timeline_path, "VAD timeline", slice_audio_tracks)
     assert main_audio_track_path is not None

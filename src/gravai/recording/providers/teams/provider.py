@@ -136,7 +136,6 @@ class TeamsMeetingRecorder(MeetingRecorder):
     rtc_intercept_js_path: Path | None = None
     vad_observer_js_path: Path | None = None
     audio_worklet_js_path: Path | None = None
-    ws_audio_server_path: Path | None = None
 
     @model_validator(mode="after")
     def assemble_es_hosts(self) -> "TeamsMeetingRecorder":
@@ -151,9 +150,8 @@ class TeamsMeetingRecorder(MeetingRecorder):
         worklet_path = self.audio_worklet_js_path
         intercept_path = self.rtc_intercept_js_path
         vad_observer_path = self.vad_observer_js_path
-        ws_server_path = self.ws_audio_server_path
 
-        assert worklet_path and intercept_path and vad_observer_path and ws_server_path, "Expected worklet, intercept, vad observer, and ws server paths to be set"
+        assert worklet_path and intercept_path and vad_observer_path, "Expected worklet, intercept and vad observer paths to be set"
 
         # Expect WS Server to be launched
 
