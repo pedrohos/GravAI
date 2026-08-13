@@ -1,10 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gravai"]
+
 [project]
 name = "gravai"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-packages = ["src/gravai"]
 dependencies = [
     "fastapi[standard]>=0.135.1",
     "httpx>=0.28.1",

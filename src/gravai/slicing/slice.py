@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime
 import subprocess
-from src.gravai.models.models import (
+from gravai.models.models import (
     SessionDataDTO,
     TrackInfoDTO,
     ActionType,
@@ -13,7 +13,7 @@ from src.gravai.models.models import (
 from collections import defaultdict
 import time
 
-from src.gravai.config.logging_config import get_logger
+from gravai.config.logging_config import get_logger
 
 # The session sidecar is written by the ws audio server process only after it
 # finishes re-encoding the recorded track (ffmpeg pitch correction), which for

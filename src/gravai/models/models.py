@@ -1,13 +1,9 @@
 from enum import Enum
 from datetime import datetime
+from typing import Generic, TypeVar
+
 from pydantic import BaseModel
 
-class Singleton(object):
-    _instances = {}
-    def __new__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super(Singleton, cls).__new__(cls, *args, **kwargs)
-        return cls._instances[cls]
 
 class RecordingType(Enum):
     TEAMS = "teams"
@@ -46,20 +42,18 @@ class Transcription(BaseModel):
     transcription_text_file_path: str
     transcription_segments_file_path: str
 
-class ParticipantDataTransc(BaseModel):
-    participant_id: str
-    participant_name: str
-    track: Track
+class ParticipantDataTransc(ParticipantData):
     transcription: Transcription
 
-class Session(BaseModel):
-    session_id: str
-    session_start: datetime
-    session_end: datetime
-    tracks: dict[str, ParticipantData] # Map participant_id to ParticipantData
+ParticipantDataT = TypeVar("ParticipantDataT", bound=ParticipantData)
 
-class TranscriptedSession(BaseModel):
+
+class Session(BaseModel, Generic[ParticipantDataT]):
     session_id: str
     session_start: datetime
     session_end: datetime
-    tracks: dict[str, ParticipantDataTransc] # Map participant_id to ParticipantData
+    tracks: dict[str, ParticipantDataT]  # Map participant_id to ParticipantData
+
+
+class TranscriptedSession(Session[ParticipantDataTransc]):
+    pass

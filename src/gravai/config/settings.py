@@ -3,12 +3,12 @@ from pathlib import Path
 
 from pydantic import Field, FilePath
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from src.gravai.models.models import Singleton
 from dotenv import load_dotenv
+from functools import lru_cache
 
 load_dotenv()
 
-class Settings(BaseSettings, Singleton):
+class Settings(BaseSettings):
     """Application configuration from environment variables"""
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
@@ -63,3 +63,7 @@ class Settings(BaseSettings, Singleton):
     #     if self.ES_HOST and self.ES_PORT:
     #         self.ES_HOSTS = [f"http://{self.ES_HOST}:{self.ES_PORT}"]
     #     return self
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings() # type: ignore

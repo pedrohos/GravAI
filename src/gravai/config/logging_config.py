@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 
-from src.gravai.config.settings import Settings
+from gravai.config.settings import get_settings
 
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
@@ -22,7 +22,7 @@ def get_logger(name: str, log_dir: str | None = None,  filename: str = "session.
     if cache_key in _configured:
         return logger
 
-    settings = Settings() # type: ignore
+    settings = get_settings()
     logger.setLevel(getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
     logger.propagate = False
 

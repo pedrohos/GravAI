@@ -1,8 +1,8 @@
 from gravai.models.models import RecordingType
-from src.gravai.config.settings import Settings
-from src.gravai.config.logging_config import get_logger
-from src.gravai.recording.providers.teams.provider import MeetingRecorder
-from src.gravai.recording.providers.teams.provider import TeamsMeetingRecorder, stop_ws_audio_server
+from gravai.config.settings import get_settings
+from gravai.config.logging_config import get_logger
+from gravai.recording.providers.teams.provider import MeetingRecorder
+from gravai.recording.providers.teams.provider import TeamsMeetingRecorder, stop_ws_audio_server
 from importlib import resources
 logger = get_logger("recording.service")
 
@@ -12,7 +12,7 @@ def start_ws_server(
     ws_host: str | None = None,
     ws_port: int | None = None,
 ) -> None:
-    settings = Settings() # type: ignore
+    settings = get_settings()
     logger.info("Starting WS audio server")
     TeamsMeetingRecorder.launch_ws_server(
         output_dir or settings.SAVE_DIR,

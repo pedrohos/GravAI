@@ -2,15 +2,15 @@ from fastapi import FastAPI, HTTPException
 import json
 from contextlib import asynccontextmanager
 
-from src.gravai.config.logging_config import get_logger
-from src.gravai.recording.service import record_meeting as service_record_meeting
-from src.gravai.recording.service import start_ws_server as service_record_start_ws_server
-from src.gravai.recording.service import stop_ws_server as service_record_stop_ws_server
+from gravai.config.logging_config import get_logger
+from gravai.recording.service import record_meeting as service_record_meeting
+from gravai.recording.service import start_ws_server as service_record_start_ws_server
+from gravai.recording.service import stop_ws_server as service_record_stop_ws_server
 
-from src.gravai.slicing.service import slice_track as service_slice_track
+from gravai.slicing.service import slice_track as service_slice_track
 
-from src.gravai.transcribe.service import transcribe_meeting_tracks as service_transcribe_meeting_tracks
-from src.gravai.models.models import RecordingType
+from gravai.transcribe.service import transcribe_meeting_tracks as service_transcribe_meeting_tracks
+from gravai.models.models import RecordingType
 
 logger = get_logger("api")
 

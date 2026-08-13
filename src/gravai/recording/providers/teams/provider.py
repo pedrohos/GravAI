@@ -13,11 +13,11 @@ import threading
 from uuid import uuid4
 from pydantic import BaseModel, model_validator
 
-from src.gravai.config.settings import Settings
-from src.gravai.config.logging_config import get_logger
-from src.gravai.models.models import Session
+from gravai.config.settings import get_settings
+from gravai.config.logging_config import get_logger
+from gravai.models.models import Session
 from abc import ABC, abstractmethod
-from src.gravai.recording.utils import _meeting_origin, _load_text, _write_vad_timeline
+from gravai.recording.utils import _meeting_origin, _load_text, _write_vad_timeline
 from datetime import datetime
 
 _WS_PROC: subprocess.Popen | None = None
@@ -52,7 +52,7 @@ class MeetingRecorder(BaseModel, ABC):
         raise NotImplementedError("Subclasses must implement this method")
 
     def record_meeting_with_ws_audio_server(self, meeting_url: str, output_dir: str | None = None, ws_host: str | None = None, ws_port: int | None = None, debug: bool = False):
-        settings = Settings() # type: ignore
+        settings = get_settings()
 
         session_id, tracks_output_dir, q, base_output_dir = self.setup(output_dir or settings.SAVE_DIR)
         logger = get_logger("recording.teams", tracks_output_dir)
@@ -141,7 +141,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
     @model_validator(mode="after")
     def assemble_es_hosts(self) -> "TeamsMeetingRecorder":
         """Constructs the ES_HOSTS URL after model validation."""
-        settings = Settings() # type: ignore
+        settings = get_settings()
         self.audio_worklet_js_path = self.audio_worklet_js_path or settings.AUDIO_WORKLET_JS_PATH
         self.rtc_intercept_js_path = self.rtc_intercept_js_path or settings.RTC_INTERCEPT_JS_PATH
         self.vad_observer_js_path = self.vad_observer_js_path or settings.VAD_OBSERVER_TEAMS_JS_PATH

@@ -1,7 +1,7 @@
 
-from src.gravai.config.logging_config import get_logger
-from src.gravai.models.models import RecordingType, Session
-from src.gravai.slicing.slice import Slicer
+from gravai.config.logging_config import get_logger
+from gravai.models.models import RecordingType, Session
+from gravai.slicing.slice import Slicer
 
 
 def slice_track(recorder_type: RecordingType, tracks_output_dir: str, group_slices_by_name: bool = True) -> tuple[str, Session]:

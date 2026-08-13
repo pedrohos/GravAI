@@ -2,10 +2,10 @@ import os
 from pathlib import Path
 import requests
 
-from src.gravai.config.settings import Settings
-from src.gravai.config.logging_config import get_logger
-from src.gravai.models.models import Session, ParticipantDataTransc, Transcription, TranscriptedSession
-from src.gravai.transcribe.formatter import format_and_save_single_segment
+from gravai.config.settings import Settings
+from gravai.config.logging_config import get_logger
+from gravai.models.models import Session, ParticipantDataTransc, Transcription, TranscriptedSession
+from gravai.transcribe.formatter import format_and_save_single_segment
 
 def transcribe_meeting_tracks(
         session: Session,
