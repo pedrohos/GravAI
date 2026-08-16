@@ -1,20 +1,53 @@
+"""The audio server behind a single recording.
+
+One of these runs per recording, spawned by
+`gravai.recording.session_audio_server.SessionAudioServer`. Everything it owns -
+the listening socket, the session directory, the sidecar and the track writers -
+belongs to exactly one session, so two recordings running at the same time share
+nothing but the machine.
+
+It runs as its own process rather than as a thread of the API for two reasons:
+the audio path is CPU bound (float32 to PCM16 conversion, then ffmpeg per
+track), so a shared interpreter would make concurrent recordings fight over one
+GIL; and a recording whose audio server hangs or dies takes down only itself.
+
+The port is chosen by the OS (`--port 0`) and reported back to the parent
+through `--ready_file`, which is what lets any number of recordings listen at
+the same time.
+"""
+
 import argparse
 import asyncio
 import json
 import os
+import shutil
 import signal
+import subprocess
+import tempfile
+import threading
 import wave
 from array import array
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
-import tempfile
-import shutil
-import subprocess
 
-import websockets
-from threading import Lock
+from websockets.asyncio.server import ServerConnection, serve
 
-sidecar_write_mutex = Lock()
+from gravai.config.logging_config import get_logger
+
+SIDECAR_FILENAME = "session_sidecar.json"
+
+# How long a track that is still streaming (or still re-encoding) may hold up
+# shutdown after the parent asks the server to stop. The parent allows for this
+# plus a margin before it resorts to killing the process.
+DEFAULT_DRAIN_TIMEOUT_S = 180.0
+
+# Second, much shorter wait: the tracks were told to close, and all that is left
+# is their handlers returning.
+_FORCED_CLOSE_TIMEOUT_S = 30.0
+
+# How often to check that the recording that owns this server is still there.
+_ORPHAN_CHECK_INTERVAL_S = 5.0
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -24,16 +57,17 @@ def _sanitize_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in value)
 
 
-def _write_sidecar(sidecar_path: str, session_info: dict) -> None:
-    # Rewritten as each track's handler closes, while the slicer may be reading
-    # it. Write to a temp file and rename so a reader never sees a truncated one.
+def _atomic_write_json(path: str, payload: dict) -> None:
+    # The sidecar is rewritten as tracks start and finish, while the slicer may
+    # be reading it. Write to a temp file and rename so a reader never sees a
+    # truncated one.
     fd, tmp_path = tempfile.mkstemp(
-        dir=os.path.dirname(sidecar_path) or ".", prefix=".session_sidecar_", suffix=".json"
+        dir=os.path.dirname(path) or ".", prefix=".tmp_", suffix=".json"
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(session_info, f, indent=2)
-        os.replace(tmp_path, sidecar_path)
+            json.dump(payload, f, indent=2)
+        os.replace(tmp_path, path)
     except Exception:
         try:
             os.remove(tmp_path)
@@ -99,127 +133,250 @@ class TrackWriter:
                 pass
 
 
-def run_server(host: str, port: int, base_output_dir: str, default_session_id: str | None = None) -> None:
-    os.makedirs(base_output_dir, exist_ok=True)
-    print(f"[ws] base_output_dir={base_output_dir} default_session_id={default_session_id}")
-    session_infos: dict[str, dict] = {}
+class SessionRecorder:
+    """The one session this process records, and the sidecar describing it.
 
-    def _session_output_dir(session_id: str) -> str:
-        safe_id = _sanitize_name(session_id)
-        suffix = f"{safe_id}_tracks"
-        if os.path.basename(base_output_dir) == suffix:
-            return base_output_dir
-        return os.path.join(base_output_dir, suffix)
+    The sidecar is the handover to slicing: it is rewritten whenever a track
+    starts or finishes, and a track's `ended_at` is what tells the slicer that
+    track's audio is complete.
+    """
 
-    def _get_session(session_id: str | None) -> tuple[str, dict, str, str]:
-        sid = session_id or default_session_id or "default"
-        info = session_infos.get(sid)
-        if not info:
-            info = {
-                "session_id": sid,
-                "session_start": _utc_now(),
-                "tracks": {},
-            }
-            session_infos[sid] = info
-        output_dir = _session_output_dir(sid)
-        os.makedirs(output_dir, exist_ok=True)
-        sidecar_path = os.path.join(output_dir, "session_sidecar.json")
-        return sid, info, output_dir, sidecar_path
+    def __init__(self, session_id: str, output_dir: str, logger):
+        self.session_id = session_id
+        self.output_dir = output_dir
+        self.sidecar_path = os.path.join(output_dir, SIDECAR_FILENAME)
+        self._logger = logger
+        self._info: dict = {
+            "session_id": session_id,
+            "session_start": _utc_now(),
+            "tracks": {},
+        }
+        # Sidecar writes happen on the event loop thread, so they are already
+        # serialized; the lock keeps that true if a write ever moves off it, the
+        # way track re-encoding did.
+        self._sidecar_lock = threading.Lock()
+        self._write_sidecar()
 
-    async def handler(ws):
-        path = getattr(ws, "path", None)
-        if path is None and hasattr(ws, "request"):
-            path = ws.request.path
-        parsed = urlparse(path or "")
-        params = parse_qs(parsed.query)
-        session_id = params.get("session_id", [None])[0]
-        track_id = params.get("track", [None])[0]
-        sample_rate = int(params.get("sr", ["48000"])[0])
-        channels = int(params.get("ch", ["1"])[0])
+    def open_track(self, track_id: str, sample_rate: int, channels: int) -> TrackWriter:
+        writer = TrackWriter(self.output_dir, track_id, sample_rate, channels)
+        self._info["tracks"][track_id] = {
+            "started_at": _utc_now(),
+            "sample_rate": sample_rate,
+            "channels": channels,
+            "wav_file": os.path.basename(writer.path),
+        }
+        self._write_sidecar()
+        self._logger.info(
+            f"Track {track_id} started (session={self.session_id} sr={sample_rate} "
+            f"ch={channels} file={os.path.basename(writer.path)})"
+        )
+        return writer
 
-        print(f"[ws] client connected {path}")
-        writer = None
-        session_info = None
-        sidecar_path = None
-        output_dir = None
-        if track_id:
-            session_id, session_info, output_dir, sidecar_path = _get_session(session_id)
-            writer = TrackWriter(output_dir, track_id, sample_rate, channels)
-            session_info["tracks"][track_id] = {
-                "started_at": _utc_now(),
-                "sample_rate": sample_rate,
-                "channels": channels,
-                "wav_file": os.path.basename(writer.path),
-            }
-            print(f"[ws] track start {track_id} session_id={session_id} sr={sample_rate} ch={channels}")
+    async def close_track(self, track_id: str, writer: TrackWriter) -> None:
+        # Closing runs ffmpeg, so it goes to a thread: on the event loop it would
+        # stall every other track of this session for the length of a re-encode.
+        await asyncio.to_thread(writer.close)
+        track = self._info["tracks"].setdefault(track_id, {})
+        track["ended_at"] = _utc_now()
+        self._write_sidecar()
+        self._logger.info(f"Track {track_id} finished (session={self.session_id})")
 
-        try:
-            async for message in ws:
-                if isinstance(message, str):
-                    try:
-                        payload = json.loads(message)
-                    except json.JSONDecodeError:
-                        continue
-                    if payload.get("type") == "start" and not writer:
-                        payload_session_id = payload.get("sessionId") or payload.get("session_id")
-                        if payload_session_id:
-                            session_id = payload_session_id
-                        track_id = payload.get("trackId") or payload.get("track_id")
-                        if not track_id:
-                            continue
-                        sample_rate = int(payload.get("sampleRate", sample_rate))
-                        channels = int(payload.get("channels", channels))
-                        session_id, session_info, output_dir, sidecar_path = _get_session(session_id)
-                        writer = TrackWriter(output_dir, track_id, sample_rate, channels)
-                        session_info["tracks"][track_id] = {
-                            "started_at": _utc_now(),
-                            "sample_rate": sample_rate,
-                            "channels": channels,
-                            "wav_file": os.path.basename(writer.path),
-                        }
-                        print(f"[ws] track start {track_id} session_id={session_id} sr={sample_rate} ch={channels}")
-                    if payload.get("type") == "stop":
-                        break
+    def _write_sidecar(self) -> None:
+        with self._sidecar_lock:
+            _atomic_write_json(self.sidecar_path, self._info)
+
+
+def _connection_params(ws: ServerConnection) -> tuple[str | None, str | None, int, int]:
+    path = getattr(ws, "path", None)
+    if path is None and hasattr(ws, "request"):
+        path = ws.request.path
+    params = parse_qs(urlparse(path or "").query)
+    return (
+        params.get("session_id", [None])[0],
+        params.get("track", [None])[0],
+        int(params.get("sr", ["48000"])[0]),
+        int(params.get("ch", ["1"])[0]),
+    )
+
+
+async def _handle_connection(ws: ServerConnection, session: SessionRecorder, logger) -> None:
+    """Writes one track for the lifetime of one browser-side websocket.
+
+    The track can be declared either in the URL or in a `start` message, since
+    the page opens the socket before the worklet reports the audio format.
+    """
+    client_session_id, track_id, sample_rate, channels = _connection_params(ws)
+    if client_session_id and client_session_id != session.session_id:
+        # Only this recording's browser knows the port, so this means the wrong
+        # url was injected. Recording it here would file another session's audio
+        # under this one.
+        logger.error(
+            f"Rejecting connection for session {client_session_id!r}: this server "
+            f"records {session.session_id!r}"
+        )
+        await ws.close(code=1008, reason="session mismatch")
+        return
+
+    writer = None
+    if track_id:
+        writer = session.open_track(track_id, sample_rate, channels)
+
+    try:
+        async for message in ws:
+            if isinstance(message, str):
+                try:
+                    payload = json.loads(message)
+                except json.JSONDecodeError:
                     continue
+                if payload.get("type") == "start" and writer is None:
+                    track_id = payload.get("trackId") or payload.get("track_id")
+                    if not track_id:
+                        continue
+                    sample_rate = int(payload.get("sampleRate", sample_rate))
+                    channels = int(payload.get("channels", channels))
+                    writer = session.open_track(track_id, sample_rate, channels)
+                elif payload.get("type") == "stop":
+                    break
+                continue
 
-                if writer:
-                    writer.write_float32(message)
-        finally:
-            if writer:
-                # Close the writer in another thread to avoid blocking the event loop, since it runs ffmpeg,
-                # thus the websocket will be able to handle (multiple) concurrent connections when multiple
-                # records are being done simultaneously. 
-                # Note that this means the track may not be fully written when the client disconnects,
-                # but the slicer will wait for the sidecar to be updated before slicing.
-                await asyncio.to_thread(writer.close)
-                if session_info is not None:
-                    track = session_info["tracks"].get(track_id, {})
-                    track["ended_at"] = _utc_now()
-                    session_info["tracks"][track_id] = track
-            if session_info is not None and sidecar_path is not None:
-                # Avoid race conditions when multiple tracks are being written at the same time
-                with sidecar_write_mutex:
-                    _write_sidecar(sidecar_path, session_info)
+            if writer is not None:
+                writer.write_float32(message)
+    finally:
+        if writer is not None and track_id is not None:
+            await session.close_track(track_id, writer)
 
-    async def run() -> None:
-        async with websockets.serve(handler, host, port, max_size=None):
-            stop_event = asyncio.Event()
 
-            def _stop(*_args):
-                stop_event.set()
+async def _serve(
+    host: str,
+    port: int,
+    session: SessionRecorder,
+    ready_file: str | None,
+    drain_timeout: float,
+    logger,
+) -> None:
+    stop_requested = asyncio.Event()
+    _install_stop_handlers(stop_requested)
+    orphan_watch = asyncio.create_task(_stop_when_orphaned(stop_requested, logger))
 
-            signal.signal(signal.SIGTERM, _stop)
-            signal.signal(signal.SIGINT, _stop)
-            await stop_event.wait()
+    async def handler(ws: ServerConnection) -> None:
+        await _handle_connection(ws, session, logger)
 
-    asyncio.run(run())
+    async with serve(handler, host, port, max_size=None) as server:
+        bound_host, bound_port = server.sockets[0].getsockname()[:2]
+        logger.info(
+            f"Audio server for session {session.session_id} listening on "
+            f"ws://{bound_host}:{bound_port} -> {session.output_dir}"
+        )
+        if ready_file:
+            # The parent blocks until this lands: it is how it learns the port
+            # the OS handed out, and that the socket is accepting connections.
+            _atomic_write_json(
+                ready_file,
+                {
+                    "session_id": session.session_id,
+                    "host": bound_host,
+                    "port": bound_port,
+                    "pid": os.getpid(),
+                },
+            )
+
+        await stop_requested.wait()
+        orphan_watch.cancel()
+
+        open_tracks = len(server.connections)
+        logger.info(f"Stop requested with {open_tracks} track connection(s) open")
+        # Stop accepting, but let tracks that are still streaming - or still
+        # being re-encoded - finish, so no wav is truncated by shutdown.
+        server.close(close_connections=False)
+        try:
+            await asyncio.wait_for(server.wait_closed(), drain_timeout)
+        except TimeoutError:
+            logger.error(
+                f"Tracks still open {drain_timeout:.0f}s after stop was requested; "
+                f"closing them now, their audio may be incomplete"
+            )
+            await _force_close(server, logger)
+
+    logger.info(f"Audio server for session {session.session_id} stopped")
+
+
+def _install_stop_handlers(stop_requested: asyncio.Event) -> None:
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_requested.set)
+        except NotImplementedError:
+            # Not available off Unix; the handler then runs outside the loop.
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop_requested.set))
+
+
+async def _stop_when_orphaned(stop_requested: asyncio.Event, logger) -> None:
+    """Shuts down if the recording that started this server is gone.
+
+    One server per recording means one orphan per recording that was killed
+    outright (a SIGKILLed API, a crashed worker) - each holding a port and an
+    open wav for as long as the machine is up. Getting reparented is the signal
+    that nobody is coming back to stop this one.
+    """
+    parent_pid = os.getppid()
+    while True:
+        await asyncio.sleep(_ORPHAN_CHECK_INTERVAL_S)
+        if os.getppid() != parent_pid:
+            logger.warning(
+                f"Recording process {parent_pid} is gone; stopping and writing out "
+                f"whatever has been recorded"
+            )
+            stop_requested.set()
+            return
+
+
+async def _force_close(server, logger) -> None:
+    await asyncio.gather(
+        *(connection.close(code=1001) for connection in list(server.connections)),
+        return_exceptions=True,
+    )
+    try:
+        await asyncio.wait_for(server.wait_closed(), _FORCED_CLOSE_TIMEOUT_S)
+    except TimeoutError:
+        logger.error("Track handlers did not return after their connections were closed")
+
+
+def run_server(
+    host: str,
+    port: int,
+    output_dir: str,
+    session_id: str,
+    ready_file: str | None = None,
+    drain_timeout: float = DEFAULT_DRAIN_TIMEOUT_S,
+) -> None:
+    os.makedirs(output_dir, exist_ok=True)
+    logger = get_logger("recording.audio_server", output_dir)
+    session = SessionRecorder(session_id, output_dir, logger)
+    try:
+        asyncio.run(_serve(host, port, session, ready_file, drain_timeout, logger))
+    except Exception:
+        logger.exception(f"Audio server for session {session_id} failed")
+        raise
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="WS audio server")
+    parser = argparse.ArgumentParser(description="Audio server for one recording session")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--output_dir", required=True)
-    parser.add_argument("--session_id")
+    parser.add_argument(
+        "--port", type=int, default=0, help="0 lets the OS pick a free port (default)"
+    )
+    parser.add_argument("--output_dir", required=True, help="This session's tracks directory")
+    parser.add_argument("--session_id", required=True)
+    parser.add_argument(
+        "--ready_file", help="Where to report the bound host/port once listening"
+    )
+    parser.add_argument("--drain_timeout", type=float, default=DEFAULT_DRAIN_TIMEOUT_S)
     args = parser.parse_args()
-    run_server(args.host, args.port, args.output_dir, args.session_id)
+    run_server(
+        args.host,
+        args.port,
+        args.output_dir,
+        args.session_id,
+        args.ready_file,
+        args.drain_timeout,
+    )

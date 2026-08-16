@@ -21,14 +21,12 @@ class Settings(BaseSettings):
     WS_HOST: str = Field(
         "127.0.0.1",
         min_length=1,
-        description="Required WebSocket host",
+        description=(
+            "Host the per-recording audio WebSocket server binds to. Its port is "
+            "assigned by the OS, one per recording, so simultaneous recordings "
+            "never contend for it."
+        ),
         alias="WS_HOST",
-    )
-
-    WS_PORT: int = Field(
-        8765,
-        description="Required WebSocket port",
-        alias="WS_PORT",
     )
 
     SAVE_DIR: str = Field(

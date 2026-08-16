@@ -18,8 +18,8 @@ meeting URL
    │
    ▼
 recording ──── headless Chromium joins the meeting; injected JS taps WebRTC
-   │           audio and streams it to a local WebSocket server, while a DOM
-   │           observer records who is speaking and when
+   │           audio and streams it to this recording's own audio server
+   │           process, while a DOM observer records who is speaking and when
    ▼
 slicing ────── turns the speaking timeline into one track per participant,
    │           aligned to the main track (silence outside their turns)
@@ -86,8 +86,7 @@ Read from `.env` (see `.env.example`).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WS_HOST` | `127.0.0.1` | Host for the internal audio WebSocket server |
-| `WS_PORT` | `8765` | Port for the internal audio WebSocket server |
+| `WS_HOST` | `127.0.0.1` | Host the internal audio WebSocket servers
 | `SAVE_DIR` | `/tmp` | Where session directories are written |
 | `WHISPER_HOST` | *required* | Whisper server hostname |
 | `WHISPER_PORT` | *required* | Whisper server port |
