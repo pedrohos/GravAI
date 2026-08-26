@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 from gravai.models.models import ParticipantData, RecordingType, Session
-from gravai.recording.providers.teams.provider import MeetingRecorder, TeamsMeetingRecorder
+from gravai.recording.providers.common.provider_base import MeetingRecorder
+from gravai.recording.providers.teams.provider import TeamsMeetingRecorder
+from gravai.recording.providers.meet.provider import MeetMeetingRecorder
 from gravai.slicing.slice import Slicer
 
 
@@ -54,6 +56,8 @@ _PROVIDERS: dict[RecordingType, ProviderSpec] = {
     RecordingType.MEET: ProviderSpec(
         recording_type=RecordingType.MEET,
         url_markers=("meet.google.com",),
+        recorder=MeetMeetingRecorder,
+        slice_session=Slicer.slice_and_create_session_teams_audio_track,
     ),
 }
 

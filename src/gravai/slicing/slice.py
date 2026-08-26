@@ -7,6 +7,7 @@ from gravai.models.models import (
     TrackInfoDTO,
     ActionType,
     ParticipantData,
+    SpeechSegment,
     Track,
     Session
 )
@@ -179,19 +180,21 @@ def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data
         start_action = max(class_counts)
         assert len([c for c in class_counts if c == end_action or c == start_action]) == len(class_counts), "Expected only two distinct class counts per participant, representing start and end actions."
 
+        # Alternating: a start is taken only when nothing is open, an end only
+        # when something is. Both halves matter - the version that only ever
+        # appended an end after the first start kept one segment per participant
+        # and dropped every utterance after it, so a caller reading the result
+        # saw a plausible transcript of the opening sentence and no sign that the
+        # rest of the meeting had been discarded.
         track_changes = []
         for event in participant_data:
             time_in_s = datetime.fromtimestamp(event["timestamp"] / 1000).astimezone() - session_data.start_time
-            print(time_in_s)
-            if len(track_changes) == 0:
-                if event["class_count"] == start_action:
-
-                    
+            is_open = bool(track_changes) and track_changes[-1][0] == ActionType.START
+            if event["class_count"] == start_action:
+                if not is_open:
                     track_changes.append((ActionType.START, time_in_s))
-            else:
-                last_change = track_changes[-1]
-                if event["class_count"] == end_action and last_change[0] == ActionType.START:
-                    track_changes.append((ActionType.END, time_in_s))
+            elif is_open:
+                track_changes.append((ActionType.END, time_in_s))
         if track_changes[-1][0] == ActionType.START:
             track_changes.append((ActionType.END, session_data.end_time - session_data.start_time))
 
@@ -199,11 +202,60 @@ def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data
     
     return participants_tracks
 
-def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations):
-    participants_tracks_path = {}
-    # Create an audio track that is the same size as the main track original and put zero audio outside of the desired track from the participant (so only the participant audio is present in the track, but it is aligned with the main track timeline)
+# Meet's level indicator animates after the audio it reflects, and the observer
+# waits for a second class mutation before calling it speech - together about
+# 1.7s, measured against a live call where the words began at 187.75s and the
+# timeline marked 190.99s. Cutting on the timeline alone loses the opening words
+# of every sentence, so each segment is widened before the audio is taken.
+_SEGMENT_LEAD_S = 2.0
+
+# Speech also ends before the indicator stops, so the tail is smaller: it covers
+# the observer's own 600ms silence hold-off.
+_SEGMENT_TAIL_S = 0.8
+
+
+def _pad_segments(
+    segments: list[tuple[float, float]],
+    lead: float = _SEGMENT_LEAD_S,
+    tail: float = _SEGMENT_TAIL_S,
+) -> list[tuple[float, float]]:
+    """Widens each segment and merges the ones that then overlap.
+
+    Overlapping segments would make ffmpeg's concat replay the same audio twice,
+    so a sentence broken into three detections comes back stuttering.
+    """
+    if not segments:
+        return []
+    widened = [(max(0.0, start - lead), end + tail) for start, end in sorted(segments)]
+    merged = [widened[0]]
+    for start, end in widened[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _speech_track_path(audio_tracks_path: str, participant_id: str) -> str:
+    """Path of a participant's speech-only track, next to the aligned one."""
+    aligned = Path(_participant_track_path(audio_tracks_path, participant_id))
+    return str(aligned.with_name(f"{aligned.stem}_speech.wav"))
+
+
+def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations) -> dict:
+    """Writes two files per participant and returns the segments behind them.
+
+    The aligned track keeps the meeting's timeline, silence and all, so anything
+    reading it can line it up against the main track. The speech track is those
+    segments concatenated, which is what goes to whisper: asked to transcribe
+    minutes of silence around a few seconds of talking, it fills the silence with
+    invented sentences, one per 30-second window.
+    """
+    participants_segments: dict[str, list[tuple[float, float]]] = {}
     for participant_id, track_changes in participants_tracks_locations.items():
         participant_track_path = _participant_track_path(audio_tracks_path, participant_id)
+        speech_track_path = _speech_track_path(audio_tracks_path, participant_id)
         main_track_path = os.path.join(audio_tracks_path, session_data.main_track_name)
         segments = []
         start_time = None
@@ -214,6 +266,9 @@ def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations
                 end_time = change[1].total_seconds()
                 segments.append((start_time, end_time))
                 start_time = None
+
+        segments = _pad_segments(segments)
+        participants_segments[participant_id] = segments
 
         if segments:
             active_expr = " + ".join(
@@ -237,8 +292,41 @@ def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations
         ]
         subprocess.run(ffmpeg_cmd, check=True)
 
-        # participants_tracks_path[participant_id] = participant_track_path
-    # return participants_tracks_path    
+        _write_speech_track(main_track_path, speech_track_path, segments)
+
+    return participants_segments
+
+
+def _write_speech_track(main_track_path: str, output_path: str, segments: list[tuple[float, float]]) -> None:
+    """Concatenates just the segments, in order, into one file.
+
+    A participant with no segments still gets a file, so every consumer can
+    assume it exists; it is empty, and the silence check before transcription is
+    what keeps it away from whisper.
+    """
+    if not segments:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+             "-t", "0.05", output_path],
+            check=True,
+        )
+        return
+
+    # One trim per segment, concatenated in the filter graph rather than through
+    # intermediate files, so this stays a single pass over the main track.
+    filters = []
+    for index, (start, end) in enumerate(segments):
+        filters.append(
+            f"[0:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[s{index}]"
+        )
+    concat_inputs = "".join(f"[s{index}]" for index in range(len(segments)))
+    filters.append(f"{concat_inputs}concat=n={len(segments)}:v=0:a=1[out]")
+
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", main_track_path,
+         "-filter_complex", ";".join(filters), "-map", "[out]", output_path],
+        check=True,
+    )
 
 class Slicer():
     @staticmethod
@@ -246,13 +334,19 @@ class Slicer():
         session_data_dto = _extract_session_dto(audio_tracks_path)
         all_participants_data = _process_participant_data(session_data_dto, group_slices_by_name)
         participants_tracks_locations = _find_participant_tracks(session_data_dto, all_participants_data)
-        _ffmpeg_slice(audio_tracks_path, session_data_dto, participants_tracks_locations)
+        participants_segments = _ffmpeg_slice(
+            audio_tracks_path, session_data_dto, participants_tracks_locations
+        )
 
         with open(os.path.join(audio_tracks_path, "slice_metadata.json"), "w") as f:
             json.dump({
                 "session_data": session_data_dto.model_dump(),
                 "all_participants_data": all_participants_data,
-                "participants_tracks_locations": participants_tracks_locations
+                "participants_tracks_locations": participants_tracks_locations,
+                # Seconds from the start of the main track, in the order they were
+                # concatenated into the speech track - transcription maps whisper's
+                # offsets back onto the meeting through these.
+                "participants_segments": participants_segments,
             }, f, default=str)
 
     @staticmethod
@@ -275,15 +369,25 @@ class Slicer():
         all_participants_data = metadata["all_participants_data"]
         participants_tracks_locations = metadata["participants_tracks_locations"]
 
+        participants_segments = metadata.get("participants_segments", {})
+
         session_tracks = {}
         for participant_id, track_changes in participants_tracks_locations.items():
             participant_name = all_participants_data[participant_id][0]["participant_name"]
             participant_track_path = _participant_track_path(audio_tracks_path, participant_id)
+            speech_track_path = _speech_track_path(audio_tracks_path, participant_id)
             session_tracks[participant_id] = ParticipantData(
                 participant_id=participant_id,
                 participant_name=participant_name,
                 track=Track(
-                    wav_file_path=participant_track_path
+                    wav_file_path=participant_track_path,
+                    speech_wav_file_path=(
+                        speech_track_path if os.path.exists(speech_track_path) else None
+                    ),
+                    speech_segments=[
+                        SpeechSegment(start=float(start), end=float(end))
+                        for start, end in participants_segments.get(participant_id, [])
+                    ],
                 )
             )
             assert os.path.exists(participant_track_path), f"Expected track file for participant {participant_name} (id: {participant_id}) not found at path: {participant_track_path}. Retry slicing or check for errors in ffmpeg slicing step."

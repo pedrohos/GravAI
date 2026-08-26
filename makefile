@@ -3,3 +3,6 @@ run:
 
 test:
 	uv run pytest -s tests
+
+test-realtime:
+	uv run pytest -s tests/realtime_test.py

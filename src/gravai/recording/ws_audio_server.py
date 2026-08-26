@@ -7,9 +7,10 @@ belongs to exactly one session, so two recordings running at the same time share
 nothing but the machine.
 
 It runs as its own process rather than as a thread of the API for two reasons:
-the audio path is CPU bound (float32 to PCM16 conversion, then ffmpeg per
-track), so a shared interpreter would make concurrent recordings fight over one
-GIL; and a recording whose audio server hangs or dies takes down only itself.
+the audio path is CPU bound (float32 to PCM16 conversion for every frame of
+every track), so a shared interpreter would make concurrent recordings fight
+over one GIL; and a recording whose audio server hangs or dies takes down only
+itself.
 
 The port is chosen by the OS (`--port 0`) and reported back to the parent
 through `--ready_file`, which is what lets any number of recordings listen at
@@ -20,9 +21,7 @@ import argparse
 import asyncio
 import json
 import os
-import shutil
 import signal
-import subprocess
 import tempfile
 import threading
 import wave
@@ -96,41 +95,42 @@ class TrackWriter:
         self.channels = channels
         safe_id = _sanitize_name(track_id)
         self.path = os.path.join(output_dir, f"track_{safe_id}.wav")
+        self._wrote_any = False
         self._wf = wave.open(self.path, "wb")
         self._wf.setnchannels(channels)
         self._wf.setsampwidth(2)
         self._wf.setframerate(self.sample_rate)
 
-    def write_float32(self, payload: bytes) -> None:
+    def write_float32(self, payload: bytes) -> bool:
+        """Writes one chunk, and says whether it was the first one.
+
+        The caller uses that to timestamp the track by its first audio rather
+        than by its socket: the page opens the socket, then builds an
+        AudioContext, loads the worklet module and resumes it, and only then does
+        a frame arrive. Those seconds are missing from the file while the sidecar
+        claims the recording started earlier, which shifts every offset slicing
+        computes and cuts the beginning off each participant's first sentence.
+        """
+        first = not self._wrote_any
+        self._wrote_any = True
         pcm16 = _float32_to_pcm16(payload)
         self._wf.writeframes(pcm16)
+        return first
 
     def close(self) -> None:
+        """Closes the file, and nothing else.
+
+        This used to re-encode every track with `asetrate=96000,aresample=48000`
+        to "fix slow-motion playback". The slow motion was self-inflicted: the
+        page's worklet posted a remote track's two channels interleaved while the
+        header declared mono, so every file came out twice as long, and doubling
+        the rate on the way out hid it. The intercept now hands over one channel
+        (see `monoCollector` in common/rtc_intercept.js) and the samples written
+        here are the samples that were recorded.
+
+        Keeping the correction after that fix would halve every track instead.
+        """
         self._wf.close()
-        # Apply pitch/tempo correction to fix slow-motion playback.
-        fd, tmp_path = tempfile.mkstemp(prefix="track_fix_", suffix=".wav")
-        os.close(fd)
-        try:
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    self.path,
-                    "-af",
-                    "asetrate=96000,aresample=48000,atempo=1",
-                    tmp_path,
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-            shutil.move(tmp_path, self.path)
-        except Exception:
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
 
 
 class SessionRecorder:
@@ -152,8 +152,7 @@ class SessionRecorder:
             "tracks": {},
         }
         # Sidecar writes happen on the event loop thread, so they are already
-        # serialized; the lock keeps that true if a write ever moves off it, the
-        # way track re-encoding did.
+        # serialized; the lock keeps that true if a write ever moves off it.
         self._sidecar_lock = threading.Lock()
         self._write_sidecar()
 
@@ -172,9 +171,29 @@ class SessionRecorder:
         )
         return writer
 
+    def mark_first_audio(self, track_id: str) -> None:
+        """Moves a track's start to when its audio actually began.
+
+        Between the socket opening and the first frame the page is still bringing
+        up its audio graph, and that gap is silence the file never contains -
+        leaving it in `started_at` makes slicing look for speech later in the
+        file than where it is.
+        """
+        track = self._info["tracks"].get(track_id)
+        if track is None:
+            return
+        opened_at = track["started_at"]
+        track["started_at"] = _utc_now()
+        self._write_sidecar()
+        if opened_at != track["started_at"]:
+            self._logger.info(
+                f"Track {track_id} first audio at {track['started_at']} "
+                f"(socket opened at {opened_at})"
+            )
+
     async def close_track(self, track_id: str, writer: TrackWriter) -> None:
-        # Closing runs ffmpeg, so it goes to a thread: on the event loop it would
-        # stall every other track of this session for the length of a re-encode.
+        # Off the event loop: closing only finalizes a wav header now, but it is
+        # still file I/O on a loop shared with every other track of this session.
         await asyncio.to_thread(writer.close)
         track = self._info["tracks"].setdefault(track_id, {})
         track["ended_at"] = _utc_now()
@@ -240,7 +259,8 @@ async def _handle_connection(ws: ServerConnection, session: SessionRecorder, log
                 continue
 
             if writer is not None:
-                writer.write_float32(message)
+                if writer.write_float32(message) and track_id is not None:
+                    session.mark_first_audio(track_id)
     finally:
         if writer is not None and track_id is not None:
             await session.close_track(track_id, writer)

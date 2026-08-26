@@ -16,3 +16,10 @@ wheels/
 *.ipynb
 *.log
 tmp/**
+
+.claude
+scripts/
+
+# A signed-in browser profile holds live Google session cookies - committing it
+# would publish the bot account's credentials.
+.bot-profile/

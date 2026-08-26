@@ -3,8 +3,10 @@ from contextlib import contextmanager
 from fastapi import APIRouter, HTTPException
 
 from gravai.api import pipeline
-from gravai.api.schemas import RecordMeetingResponse, TranscribeResponse
+from gravai.api.schemas import CaptchaChallenge, RecordMeetingResponse, TranscribeResponse
 from gravai.config.logging_config import get_logger
+from gravai.config.settings import get_settings
+from gravai.recording.common.vnc import pending_challenges
 from gravai.transcribe.errors import WhisperError
 
 logger = get_logger("api.meetings")
@@ -86,3 +88,25 @@ def transcribe(tracks_output_dir: str, group_slices_by_name: bool = True) -> Tra
         session_metadata_path=metadata_output_path,
         transcribed_slices_session=transc_session,
     )
+
+
+@router.get("/captcha_challenges", response_model=list[CaptchaChallenge])
+def captcha_challenges() -> list[CaptchaChallenge]:
+    """Every recording currently stuck on a CAPTCHA, and where to answer it.
+
+    A Google sign-in that hits one cannot get past it on its own - the challenge
+    is asking whether there is a person - so the recorder puts the browser's
+    screen on a VNC port and waits. This is how to find that port without
+    tailing a session log: it reads the record each waiting recording leaves in
+    its own session directory.
+
+    Empty is the ordinary answer. Nothing here starts or stops a VNC server.
+    """
+    logger.info("Received /captcha_challenges request")
+
+    with _handled("/captcha_challenges", "the save directory"):
+        waiting = pending_challenges(get_settings().SAVE_DIR)
+
+    if waiting:
+        logger.warning(f"{len(waiting)} CAPTCHA(s) waiting for somebody to answer them")
+    return [CaptchaChallenge.model_validate(challenge) for challenge in waiting]

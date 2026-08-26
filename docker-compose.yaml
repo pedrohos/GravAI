@@ -6,6 +6,11 @@ services:
     container_name: gravai-app
     ports:
       - "8000:8000"
+      # Only ever listening while a Google sign-in is waiting on a CAPTCHA, and
+      # closed again as soon as it is answered. VNC_PASSWORD in .env is what
+      # stands between this port and the browser's keyboard - set one, or drop
+      # this mapping and reach it over an SSH tunnel instead.
+      - "5900:5900"
     volumes:
       - .env:/app/.env
       - /var/run/docker.sock:/var/run/docker.sock

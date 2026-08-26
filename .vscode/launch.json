@@ -34,6 +34,20 @@
             "subProcess": true
         },
         {
+            "name": "Python Debugger: Pytest Realtime Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "-s",
+                "tests/realtime_test.py"
+            ],
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "subProcess": true
+        },
+        {
             "name": "Python Debugger: Test",
             "type": "debugpy",
             "request": "launch",

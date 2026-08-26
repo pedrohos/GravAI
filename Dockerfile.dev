@@ -6,11 +6,14 @@ WORKDIR /app
 
 # ENV DEBIAN_FRONTEND=noninteractive
 
+# x11vnc serves the browser's screen when the Google sign-in hits a CAPTCHA, so
+# that a person can read it and type what it says - see recording/common/vnc.py.
+# Xvfb, the screen it serves, arrives with 'playwright install-deps' further down.
 RUN apt-get update &&\
     apt-get install -y --no-install-recommends curl\
         ca-certificates gcc libasound-dev portaudio19-dev\
         libportaudio2 libportaudiocpp0 build-essential\
-        libcap2-bin pulseaudio ffmpeg &&\
+        libcap2-bin pulseaudio ffmpeg x11vnc &&\
     rm -rf /var/lib/apt/lists/*
 
 # Fix dumpcap capabilities to run in unprivileged docker environments - required by tshark
@@ -31,3 +34,6 @@ RUN uv sync
 # Run this after container finished building
 RUN uv run playwright install-deps
 RUN uv run playwright install
+# The Meet recorder launches channel="chrome": bundled Chromium is refused by
+# Meet behind the very same persona that the branded build gets in with.
+RUN uv run playwright install chrome
