@@ -1,76 +1,48 @@
-import queue
-import time
-from pathlib import Path
-from playwright.sync_api import sync_playwright
-import multiprocessing as mp
-from multiprocessing import Queue
 import os
-import json
-from uuid import uuid4
-from pydantic import BaseModel, model_validator
+import time
+from multiprocessing import Queue
+from pathlib import Path
 
+from playwright.sync_api import sync_playwright
+from pydantic import model_validator
+
+from gravai.config.logging_config import get_logger
 from gravai.config.settings import get_settings
-from gravai.config.logging_config import get_logger, release_session_logs
-from abc import ABC, abstractmethod
-from gravai.recording.session_audio_server import EPHEMERAL_PORT, SessionAudioServer
-from gravai.recording.utils import _meeting_origin, _load_text, _write_vad_timeline
-from datetime import datetime
+from gravai.recording.session_audio_capture import (
+    MAIN_TRACK_FILENAME,
+    browser_env,
+    log_capture_status,
+)
+from gravai.jobs.stop_signal import stop_requested
+from gravai.recording.utils import _meeting_origin, _write_vad_timeline
 
-from ..common.provider_base import MeetingRecorder
+from ..provider_base import MeetingRecorder
 
 
 class TeamsMeetingRecorder(MeetingRecorder):
-    rtc_intercept_js_path: Path | None = None
     vad_observer_js_path: Path | None = None
-    audio_worklet_js_path: Path | None = None
 
     @model_validator(mode="after")
     def assemble_es_hosts(self) -> "TeamsMeetingRecorder":
         """Constructs the ES_HOSTS URL after model validation."""
         settings = get_settings()
-        self.audio_worklet_js_path = self.audio_worklet_js_path or settings.AUDIO_WORKLET_JS_PATH
-        self.rtc_intercept_js_path = self.rtc_intercept_js_path or settings.RTC_INTERCEPT_JS_PATH
         self.vad_observer_js_path = self.vad_observer_js_path or settings.VAD_OBSERVER_TEAMS_JS_PATH
         return self
 
-    def prepare_injection(self, meeting_url: str, ws_url: str, session_id: str) -> tuple[str, str, list[dict], dict]:
-        """Builds the scripts injected into the page, pointed at this session's
-        audio server, which the caller has already started at ws_url."""
-        worklet_path = self.audio_worklet_js_path
-        intercept_path = self.rtc_intercept_js_path
-        vad_observer_path = self.vad_observer_js_path
-
-        assert worklet_path and intercept_path and vad_observer_path, "Expected worklet, intercept and vad observer paths to be set"
-
-        worklet_js = _load_text(worklet_path)
-        intercept_js = _load_text(intercept_path)
-        vad_observer_js = _load_text(vad_observer_path)
-        intercept_js = (
-            intercept_js
-            .replace("{{WS_URL}}", ws_url)
-            .replace("{{WORKLET_CODE}}", json.dumps(worklet_js))
-            # Teams names its own tracks `mainAudio-…`, so slicing already has the
-            # track it cuts and a mix would only duplicate it.
-            .replace("{{MAIN_MIX}}", "false")
-        )
-        vad_events: list[dict] = []
-        vad_meta = {
-            "session_id": session_id,
-            "meeting_url": meeting_url,
-            "page_start_ms": None,
-            "page_end_ms": None,
-        }
-
-        return intercept_js, vad_observer_js, vad_events, vad_meta
-
     # Is run on a separate process
-    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict):
+    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, vad_observer_js, vad_events: list[dict], vad_meta: dict, audio_sink: str | None):
         logger = get_logger("recording.teams", output_dir)
+        main_track_path = os.path.join(output_dir, MAIN_TRACK_FILENAME)
         try:
             with sync_playwright() as p:
                 logger.info("Launching headless Chromium browser")
                 browser = p.chromium.launch(
                     headless=True,
+                    # PULSE_SINK is what puts this browser's audio into this
+                    # recording's sink and nowhere else. Headless Chrome plays
+                    # into Pulse exactly as a windowed one does - measured at
+                    # the same level - so this stays headless.
+                    env=browser_env(audio_sink),
                     ignore_default_args=["--mute-audio"],
                     args=[
                         "--use-fake-ui-for-media-stream",
@@ -81,7 +53,6 @@ class TeamsMeetingRecorder(MeetingRecorder):
                     ],
                 )
                 context = browser.new_context(bypass_csp=True, ignore_https_errors=True)
-                context.add_init_script(intercept_js)
                 context.add_init_script(vad_observer_js)
                 context.grant_permissions([], origin=_meeting_origin(meeting_url))
 
@@ -144,6 +115,8 @@ class TeamsMeetingRecorder(MeetingRecorder):
                     logger.warning(f"[vad] failed to initialize timeline: {exc}")
 
                 logger.info("Waiting to be admitted into the meeting room / listening for audio activity...")
+                if audio_sink:
+                    log_capture_status(audio_sink, main_track_path, logger, "on joining the call")
 
                 def _drain_vad_events() -> None:
                     try:
@@ -173,6 +146,12 @@ class TeamsMeetingRecorder(MeetingRecorder):
                 last_vad_event_count = 0
                 joined_meeting = False
                 while True:
+                    if stop_requested(output_dir):
+                        logger.info(
+                            "Stop was requested for this recording; leaving the meeting and "
+                            "finalizing the audio"
+                        )
+                        break
                     _drain_vad_events()
                     try:
                         # Updates last 'activity detected' timestamp. New events implies the meeting is still ongoing
@@ -202,7 +181,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
                         ended_span_locator.or_(removed_h1_locator).wait_for(state="visible", timeout=1000)
                         logger.info("Meeting end detected (left the meeting or was removed)")
                         break
-                    except Exception as e:
+                    except Exception:
                         if time.time() >= deadline:
                             logger.warning("Meeting end span not detected, closing after timeout.")
                             break

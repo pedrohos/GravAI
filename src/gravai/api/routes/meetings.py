@@ -1,93 +1,84 @@
-from contextlib import contextmanager
+"""The meeting routes, as shorthands for submitting a job.
 
-from fastapi import APIRouter, HTTPException
+These three paths used to do the work inside the request and answer with the
+result, which meant an HTTP connection held open for the length of a meeting: a
+proxy timing out, a client reconnecting, or a reload of the server all lost the
+recording, and there was no way to ask about one while it ran.
 
-from gravai.api import pipeline
-from gravai.api.schemas import CaptchaChallenge, RecordMeetingResponse, TranscribeResponse
+They now submit a job and answer with it, immediately. What they still are is
+the short way to say the common things - the body of POST /jobs written out as a
+path and two query parameters - and they refuse exactly what that route refuses,
+at the same moment, for the same reasons. Poll GET /jobs/{id} for the result, and
+GET /recordings/{id} for what it recorded.
+"""
+
+from fastapi import APIRouter, status
+
+from gravai.api.routes.errors import handled
+from gravai.api.schemas import CaptchaChallenge
 from gravai.config.logging_config import get_logger
 from gravai.config.settings import get_settings
+from gravai.jobs import runner
+from gravai.jobs.models import Job, JobSubmission, JobType
 from gravai.recording.common.vnc import pending_challenges
-from gravai.transcribe.errors import WhisperError
 
 logger = get_logger("api.meetings")
 
 router = APIRouter(tags=["meetings"])
 
 
-@contextmanager
-def _handled(operation: str, target: str):
-    """Maps pipeline failures onto status codes, so every route reports them alike."""
-    try:
-        yield
-    except HTTPException:
-        raise
-    except pipeline.UnsupportedMeetingURL as exc:
-        logger.warning(f"{operation} rejected {target}: {exc}")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except NotImplementedError as exc:
-        logger.warning(f"{operation} unsupported for {target}: {exc}")
-        raise HTTPException(status_code=501, detail=str(exc)) from exc
-    except WhisperError as exc:
-        # Upstream transcription service failed - this request was fine, so it
-        # reports as a gateway failure rather than an error in this service.
-        logger.error(f"{operation} failed for {target}: {exc}")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception(f"{operation} failed for {target}")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.post("/record_meeting", response_model=RecordMeetingResponse)
-def record_meeting(meeting_url: str, slice_tracks: bool = True) -> RecordMeetingResponse:
+@router.post("/record_meeting", response_model=Job, status_code=status.HTTP_202_ACCEPTED)
+def record_meeting(meeting_url: str, slice_tracks: bool = True) -> Job:
+    """Joins a meeting and records it, cutting one track per participant."""
     logger.info(f"Received /record_meeting request for {meeting_url} (slice_tracks={slice_tracks})")
 
-    with _handled("/record_meeting", meeting_url):
-        tracks_output_dir, metadata_output_path, session = pipeline.record(
-            meeting_url, slice_tracks
+    with handled("/record_meeting", meeting_url):
+        return runner.submit(
+            JobSubmission(
+                type=JobType.RECORD,
+                meeting_url=meeting_url,
+                slice_tracks=slice_tracks,
+            )
         )
 
-    logger.info(f"/record_meeting completed for {meeting_url} -> {tracks_output_dir}")
-    return RecordMeetingResponse(
-        recording_path=tracks_output_dir,
-        session_metadata_path=metadata_output_path,
-        session=session,
-    )
 
+@router.post(
+    "/record_meeting_and_transcribe", response_model=Job, status_code=status.HTTP_202_ACCEPTED
+)
+def record_meeting_and_transcribe(meeting_url: str, group_slices_by_name: bool = True) -> Job:
+    """The whole pipeline: join, record, slice, transcribe each speaker and the
+    meeting as a whole.
 
-@router.post("/record_meeting_and_transcribe", response_model=TranscribeResponse)
-def record_meeting_and_transcribe(
-    meeting_url: str, group_slices_by_name: bool = True
-) -> TranscribeResponse:
+    Two jobs, not one. The recording is what comes back; the transcription that
+    follows it is in the job list from the same moment, `waiting`, and names the
+    recording it is behind through `depends_on`. Splitting them is what lets a
+    whisper outage leave a finished recording and one failed transcription that
+    can be run again, rather than a single job reporting the meeting as lost."""
     logger.info(f"Received /record_meeting_and_transcribe request for {meeting_url}")
 
-    with _handled("/record_meeting_and_transcribe", meeting_url):
-        tracks_output_dir, metadata_output_path, transc_session = pipeline.record_and_transcribe(
-            meeting_url, group_slices_by_name
+    with handled("/record_meeting_and_transcribe", meeting_url):
+        return runner.submit(
+            JobSubmission(
+                type=JobType.RECORD_AND_TRANSCRIBE,
+                meeting_url=meeting_url,
+                group_slices_by_name=group_slices_by_name,
+            )
         )
 
-    logger.info(f"/record_meeting_and_transcribe completed for {meeting_url} -> {tracks_output_dir}")
-    return TranscribeResponse(
-        recording_path=tracks_output_dir,
-        session_metadata_path=metadata_output_path,
-        transcribed_slices_session=transc_session,
-    )
 
-
-@router.post("/transcribe", response_model=TranscribeResponse)
-def transcribe(tracks_output_dir: str, group_slices_by_name: bool = True) -> TranscribeResponse:
+@router.post("/transcribe", response_model=Job, status_code=status.HTTP_202_ACCEPTED)
+def transcribe(tracks_output_dir: str, group_slices_by_name: bool = True) -> Job:
+    """Slices and transcribes a directory a previous recording left behind."""
     logger.info(f"Received /transcribe request for {tracks_output_dir}")
 
-    with _handled("/transcribe", tracks_output_dir):
-        metadata_output_path, transc_session = pipeline.transcribe_tracks(
-            tracks_output_dir, group_slices_by_name=group_slices_by_name
+    with handled("/transcribe", tracks_output_dir):
+        return runner.submit(
+            JobSubmission(
+                type=JobType.TRANSCRIBE,
+                tracks_output_dir=tracks_output_dir,
+                group_slices_by_name=group_slices_by_name,
+            )
         )
-
-    logger.info(f"/transcribe completed for {tracks_output_dir}")
-    return TranscribeResponse(
-        recording_path=tracks_output_dir,
-        session_metadata_path=metadata_output_path,
-        transcribed_slices_session=transc_session,
-    )
 
 
 @router.get("/captcha_challenges", response_model=list[CaptchaChallenge])
@@ -96,15 +87,15 @@ def captcha_challenges() -> list[CaptchaChallenge]:
 
     A Google sign-in that hits one cannot get past it on its own - the challenge
     is asking whether there is a person - so the recorder puts the browser's
-    screen on a VNC port and waits. This is how to find that port without
-    tailing a session log: it reads the record each waiting recording leaves in
-    its own session directory.
+    screen on a VNC port and waits. This is how to find that port without tailing
+    a session log: it reads the record each waiting recording leaves in its own
+    session directory.
 
     Empty is the ordinary answer. Nothing here starts or stops a VNC server.
     """
     logger.info("Received /captcha_challenges request")
 
-    with _handled("/captcha_challenges", "the save directory"):
+    with handled("/captcha_challenges", "the save directory"):
         waiting = pending_challenges(get_settings().SAVE_DIR)
 
     if waiting:

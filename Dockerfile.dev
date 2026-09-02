@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM ghcr.io/astral-sh/uv:latest AS uv
 
 FROM python:3.12-slim-trixie
@@ -6,6 +8,11 @@ WORKDIR /app
 
 # ENV DEBIAN_FRONTEND=noninteractive
 
+# pulseaudio and ffmpeg are how the meeting is recorded: each recording plays
+# into a null sink of its own and ffmpeg records that sink's monitor - see
+# recording/session_audio_capture.py. Nothing here starts the daemon: it is
+# started per recording, so that one that has died is brought back rather than
+# leaving the browser playing into a dummy device.
 # x11vnc serves the browser's screen when the Google sign-in hits a CAPTCHA, so
 # that a person can read it and type what it says - see recording/common/vnc.py.
 # Xvfb, the screen it serves, arrives with 'playwright install-deps' further down.
@@ -19,21 +26,32 @@ RUN apt-get update &&\
 # Fix dumpcap capabilities to run in unprivileged docker environments - required by tshark
 # RUN setcap -r /usr/bin/dumpcap && chmod 755 /usr/bin/dumpcap
 
-# RUN pulseaudio --start
-
 RUN mkdir -p /run/dbus
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 
 ENV PATH="/app/.venv/bin:${PATH}"
 
+# The cache mount below lives on a different filesystem from /app, where uv would
+# rather hardlink than copy; saying so here is what keeps it from warning about
+# it on every build.
+ENV UV_LINK_MODE=copy
+
+# Copy the minimum neecessary for uv to install deps
+COPY pyproject.toml uv.lock README.md /app/
+
+# First run to install dependencies (specially playwright to be run at the next step)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project
+
+RUN playwright install-deps
+RUN playwright install
+# bundled Chromium is rejected by Meet bot detection, so chrome is used instead
+RUN playwright install chrome
+
+# Everything aboved is cached
 COPY . /app
 
-RUN uv sync
-
-# Run this after container finished building
-RUN uv run playwright install-deps
-RUN uv run playwright install
-# The Meet recorder launches channel="chrome": bundled Chromium is refused by
-# Meet behind the very same persona that the branded build gets in with.
-RUN uv run playwright install chrome
+# Re runs to install project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen

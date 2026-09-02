@@ -1,6 +1,9 @@
-from gravai.models.models import Session
-from gravai.transcribe.base import transcribe_meeting_tracks as transcribe_meeting_tracks_base
 from gravai.config.settings import get_settings
+from gravai.models.common import Session
+from gravai.transcribe.base import (
+    transcribe_meeting_tracks as transcribe_meeting_tracks_base,
+)
+
 
 def transcribe_meeting_tracks(
         session: Session,

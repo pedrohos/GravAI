@@ -13,8 +13,13 @@ import subprocess
 
 import pytest
 
-from gravai.models.models import SpeechSegment
-from gravai.transcribe.base import _SILENCE_PEAK_DBFS, is_silent, peak_dbfs, to_meeting_time
+from gravai.models.common import SpeechSegment
+from gravai.transcribe.base import (
+    _SILENCE_PEAK_DBFS,
+    is_silent,
+    peak_dbfs,
+    to_meeting_time,
+)
 
 
 def _wav(path, filter_spec: str, seconds: float = 3.0) -> str:
@@ -91,7 +96,7 @@ def test_the_language_reaches_whisper(monkeypatch, tmp_path):
     Whisper detects the language itself when the field is absent, and on a short
     or noisy clip it picks the wrong one and translates the transcript into it.
     """
-    import gravai.transcribe.base as base
+    from gravai.transcribe import base
 
     audio = tmp_path / "clip.wav"
     subprocess.run(

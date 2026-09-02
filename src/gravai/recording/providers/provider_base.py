@@ -1,45 +1,71 @@
-import queue
-import time
-from pathlib import Path
-from playwright.sync_api import sync_playwright
 import multiprocessing as mp
-from multiprocessing import Queue
 import os
-import json
-from uuid import uuid4
-from pydantic import BaseModel, model_validator
-
-from gravai.config.settings import get_settings
-from gravai.config.logging_config import get_logger, release_session_logs
+import queue
 from abc import ABC, abstractmethod
-from gravai.recording.session_audio_server import EPHEMERAL_PORT, SessionAudioServer
-from gravai.recording.utils import _meeting_origin, _load_text, _write_vad_timeline
+from collections.abc import Callable
 from datetime import datetime
+from multiprocessing import Queue
+from pathlib import Path
+from uuid import uuid4
+
+from pydantic import BaseModel
+
+from gravai.config.logging_config import get_logger, release_session_logs
+from gravai.config.settings import get_settings
+from gravai.recording.session_audio_capture import SessionAudioCapture
+from gravai.recording.utils import _load_text
 
 # Only reached when the recording process died without reporting a result, so
 # this is a short backstop before giving up - not a wait on the recording itself.
 _RESULT_QUEUE_TIMEOUT_S = 30.0
 
 class MeetingRecorder(BaseModel, ABC):
-    rtc_intercept_js_path: Path | None
     vad_observer_js_path: Path | None
-    audio_worklet_js_path: Path | None
 
     # Is run on a separate process
     @abstractmethod
-    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict):
+    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, vad_observer_js, vad_events: list[dict], vad_meta: dict, audio_sink: str | None):
         raise NotImplementedError("Subclasses must implement this method")
 
-    @abstractmethod
-    def prepare_injection(self, meeting_url: str, ws_url: str, session_id: str) -> tuple[str, str, list[dict], dict]:
-        raise NotImplementedError("Subclasses must implement this method")
+    def prepare_vad_observer(self, meeting_url: str, session_id: str) -> tuple[str, list[dict], dict]:
+        """Script injected into the page to detect speaker activity and the timeline it fills.
 
-    def record_meeting_with_audio_server(self, meeting_url: str, output_dir: str | None = None, ws_host: str | None = None, ws_port: int | None = None, debug: bool = False) -> str:
-        """Records one meeting, backed by an audio server process of its own.
+        Meet and Teams only show who is speaking through an animated level indicator,
+        which is readable at any useful resolution only from inside the page. See
+        `docs/speaker-attribution-options.md`.
+        """
+        assert self.vad_observer_js_path, "Expected a vad observer path to be set"
 
-        The audio server is started before the browser and stopped after it, so
-        the port injected into the page belongs to this session alone and no
-        other recording is affected when this one starts or ends.
+        vad_events: list[dict] = []
+        vad_meta = {
+            "session_id": session_id,
+            "meeting_url": meeting_url,
+            "page_start_ms": None,
+            "page_end_ms": None,
+        }
+        return _load_text(self.vad_observer_js_path), vad_events, vad_meta
+
+    def record_meeting_with_audio_capture(
+        self,
+        meeting_url: str,
+        output_dir: str | None = None,
+        debug: bool = False,
+        on_session_start: Callable[[str, str], None] | None = None,
+    ) -> str:
+        """Records one meeting, its audio taken from a sink of its own.
+
+        The sink and the ffmpeg recording it are started before the browser and
+        stopped after it, which is the order this design depends on: a browser
+        that launches before there is a sink to bind to plays into a dummy
+        device for the rest of its life and the recording is silence.
+
+        on_session_start is handed the session id and its directory as soon as
+        both exist, which is long before this returns - a meeting runs for as
+        long as a meeting runs. That is the first moment anything outside can
+        learn where this recording is writing, and so the only way to reach it
+        while it is still going: to follow its log, to answer a CAPTCHA it is
+        waiting on, or to ask it to leave the meeting. A callback that raises is
+        not allowed to take the recording down with it.
         """
         settings = get_settings()
 
@@ -47,26 +73,27 @@ class MeetingRecorder(BaseModel, ABC):
         logger = get_logger("recording.teams", tracks_output_dir)
         logger.info(f"Setup complete for session {session_id} (meeting_url={meeting_url}, output_dir={tracks_output_dir})")
 
-        try:
-            with SessionAudioServer(
-                session_id=session_id,
-                output_dir=tracks_output_dir,
-                host=ws_host or settings.WS_HOST,
-                port=ws_port if ws_port is not None else EPHEMERAL_PORT,
-            ) as audio_server:
-                # The intercept_js and vad_observer_js are modified with this session's
-                # ws_url and injected in the browser; they are responsible for recording
-                # and sending the audio packages to its audio server
-                intercept_js, vad_observer_js, vad_events, vad_meta = self.prepare_injection(
-                    meeting_url,
-                    audio_server.ws_url,
-                    session_id,
+        if on_session_start is not None:
+            try:
+                on_session_start(session_id, tracks_output_dir)
+            except Exception:
+                logger.exception(
+                    f"on_session_start failed for session {session_id}; the recording continues"
                 )
 
-                logger.info(f"Starting intercept mode session {session_id} -> {tracks_output_dir}")
+        try:
+            with SessionAudioCapture(
+                session_id=session_id,
+                output_dir=tracks_output_dir,
+            ) as audio_capture:
+                vad_observer_js, vad_events, vad_meta = self.prepare_vad_observer(
+                    meeting_url, session_id
+                )
+
+                logger.info(f"Starting session {session_id} -> {tracks_output_dir}")
                 p_join_browser = ctx.Process(
                     target=self.record_meeting,
-                    args=(meeting_url, q, tracks_output_dir, debug, intercept_js, vad_observer_js, vad_events, vad_meta),
+                    args=(meeting_url, q, tracks_output_dir, debug, vad_observer_js, vad_events, vad_meta, audio_capture.sink_name),
                 )
 
                 p_join_browser.start()
@@ -109,9 +136,9 @@ class MeetingRecorder(BaseModel, ABC):
                     )
                     raise RuntimeError(f"Unexpected result from recording process: {res_type!r}")
 
-            # Leaving the block stopped the audio server, which only exits once
-            # every track it was writing is closed and re-encoded - so the
-            # directory returned here is complete and ready to slice.
+            # Leaving the block stopped ffmpeg, finalized the wav header and
+            # stamped the sidecar's ended_at - so the directory returned here is
+            # complete and ready to slice.
             logger.info(f"Recording finished successfully for session {session_id}")
             return tracks_output_dir
         except BaseException:
@@ -134,7 +161,7 @@ class MeetingRecorder(BaseModel, ABC):
         os.makedirs(output_dir, exist_ok=True)
 
         session_prefix = datetime.today().strftime("%Y_%m_%d")
-        session_id = f"{session_prefix}_{str(uuid4())}"
+        session_id = f"{session_prefix}_{uuid4()!s}"
 
         tracks_output_dir = f"{output_dir}/{session_id}_tracks"
 

@@ -1,7 +1,9 @@
-from gravai.models.models import RecordingType
-from gravai.config.settings import get_settings
+from collections.abc import Callable
+
 from gravai.config.logging_config import get_logger
-from gravai.registry import get_provider
+from gravai.config.registry import get_provider
+from gravai.config.settings import get_settings
+from gravai.models.common import RecordingType
 
 logger = get_logger("recording.service")
 
@@ -10,16 +12,18 @@ def record_meeting(
     recorder_type: RecordingType,
     meeting_url: str,
     output_dir: str | None = None,
-    ws_host: str | None = None,
-    ws_port: int | None = None,
     debug: bool = False,
+    on_session_start: Callable[[str, str], None] | None = None,
 ) -> str:
     """Records one meeting end to end.
 
-    Each call runs its own audio server process, so recordings started while
-    another is in progress are independent of it. ws_port pins that server to a
-    fixed port, which is for debugging a single recording - leave it unset and
-    the OS assigns one, which is what makes concurrent recordings possible.
+    The audio is captured from a PulseAudio sink of this recording's own, bound
+    to its browser through PULSE_SINK, so recordings started while another is in
+    progress neither hear each other nor share a process lifetime.
+
+    on_session_start is called with the session id and its directory as soon as
+    the recorder has both, which is the only way a caller learns where a
+    recording is writing before it ends.
     """
     settings = get_settings()
     debug = debug or settings.DEBUG_GRAVAI
@@ -27,10 +31,9 @@ def record_meeting(
     logger.info(f"Debug mode is {'enabled' if debug else 'disabled'}")
 
     recorder = get_provider(recorder_type).recorder()  # type: ignore[misc]
-    return recorder.record_meeting_with_audio_server(
+    return recorder.record_meeting_with_audio_capture(
         meeting_url,
         output_dir=output_dir,
-        ws_host=ws_host,
-        ws_port=ws_port,
         debug=debug,
+        on_session_start=on_session_start,
     )

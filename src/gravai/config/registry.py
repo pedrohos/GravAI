@@ -5,13 +5,13 @@ per provider - recorder construction, slicing, and URL detection - reads from
 this table instead, so a registered provider is registered everywhere at once.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
-from gravai.models.models import ParticipantData, RecordingType, Session
-from gravai.recording.providers.common.provider_base import MeetingRecorder
-from gravai.recording.providers.teams.provider import TeamsMeetingRecorder
+from gravai.models.common import ParticipantData, RecordingType, Session
 from gravai.recording.providers.meet.provider import MeetMeetingRecorder
+from gravai.recording.providers.provider_base import MeetingRecorder
+from gravai.recording.providers.teams.provider import TeamsMeetingRecorder
 from gravai.slicing.slice import Slicer
 
 

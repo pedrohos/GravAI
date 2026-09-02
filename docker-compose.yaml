@@ -13,6 +13,38 @@ services:
       - "5900:5900"
     volumes:
       - .env:/app/.env
+      # The job queue and the catalogue of recordings. Without this the service
+      # forgets every meeting it has ever recorded each time the container is
+      # replaced, while the audio itself stays wherever SAVE_DIR points.
+      - gravai-data:/app/data
+      # Somewhere for the audio to live. It is only used once SAVE_DIR points
+      # at it - set SAVE_DIR=/recordings in .env. Left at the default of /tmp
+      # the catalogue outlives the files, and a meeting reads back with its
+      # transcript and nothing to play.
+      - gravai-recordings:/recordings
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     entrypoint: ["uv", "run", "fastapi", "run", "src/gravai/api/app.py", "--host", "0.0.0.0", "--port", "8000"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: gravai-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # Where the front end's own server should call the API. A service name on
+      # this network, because it is resolved here and not by the browser: the
+      # page only ever talks to port 3000, and this server makes the API call on
+      # its behalf. Nothing is cross-origin, so there is no CORS to keep in step.
+      GRAVAI_API_URL: ${GRAVAI_API_URL:-http://app:8000}
+    depends_on:
+      - app
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  gravai-data:
+  gravai-recordings:

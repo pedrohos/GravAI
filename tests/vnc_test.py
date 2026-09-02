@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -537,8 +537,8 @@ def _write_challenge(directory: Path, **overrides) -> None:
         "vnc_url": "vnc://0.0.0.0:5900",
         "vnc_password": "abc12345",
         "screenshot_path": None,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(timespec="seconds"),
-        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(timespec="seconds"),
+        "updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     payload.update(overrides)
     (directory / CHALLENGE_FILENAME).write_text(json.dumps(payload))
@@ -565,7 +565,7 @@ def test_a_challenge_whose_recording_was_killed_stops_asking_when_it_expires(tmp
     # so the file it left says 'waiting' for as long as the directory is kept.
     _write_challenge(
         tmp_path / "killed_tracks",
-        expires_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(timespec="seconds"),
+        expires_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(timespec="seconds"),
     )
 
     assert pending_challenges(str(tmp_path)) == []

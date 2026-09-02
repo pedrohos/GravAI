@@ -38,8 +38,8 @@ admits guests never reaches this module.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 from urllib.parse import urlparse
 
 from gravai.config.settings import get_settings

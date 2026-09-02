@@ -1,5 +1,5 @@
-from enum import Enum
 from datetime import datetime
+from enum import Enum
 from typing import Generic, TypeVar
 
 from pydantic import BaseModel
@@ -68,7 +68,17 @@ class Session(BaseModel, Generic[ParticipantDataT]):
     session_start: datetime
     session_end: datetime
     tracks: dict[str, ParticipantDataT]  # Map participant_id to ParticipantData
+    # The mixed track every participant track was cut out of. Kept on the session
+    # so that transcription can read the meeting as a whole and not only one
+    # voice at a time; None for a session restored from metadata written before
+    # this field existed.
+    main_track_path: str | None = None
 
 
 class TranscriptedSession(Session[ParticipantDataTransc]):
-    pass
+    # The whole meeting transcribed from the mixed track in one pass. It is not
+    # the participant transcripts concatenated: this one reads the conversation
+    # with its interruptions and overlaps in place, which is what a summary wants,
+    # while the per-participant transcripts are what attribute a sentence to a
+    # speaker. None when there was no mixed track, or it measured as silent.
+    meeting_transcription: Transcription | None = None

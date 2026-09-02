@@ -6,12 +6,9 @@ from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 from pydantic import model_validator
-import json
 
 from gravai.config.logging_config import get_logger
 from gravai.config.settings import get_settings
-from gravai.recording.utils import _meeting_origin, _load_text, _write_vad_timeline
-
 from gravai.recording.common.browser_persona import (
     WINDOWS_CHROME,
     apply_persona,
@@ -33,8 +30,15 @@ from gravai.recording.common.human_input import (
     type_like_a_person,
 )
 from gravai.recording.common.vnc import CaptchaHandoff, VirtualDisplay
+from gravai.recording.session_audio_capture import (
+    MAIN_TRACK_FILENAME,
+    browser_env,
+    log_capture_status,
+)
+from gravai.jobs.stop_signal import stop_requested
+from gravai.recording.utils import _meeting_origin, _write_vad_timeline
 
-from ..common.provider_base import MeetingRecorder
+from ..provider_base import MeetingRecorder
 
 # Meet has no stable ids to hook on - its class names are obfuscated and rotate -
 # so the join flow is driven by accessible names and visible copy, which do not.
@@ -122,6 +126,12 @@ _POLL_INTERVAL_MS = 1000
 # Reading the page text is cheap but not free, and a call runs for hours - once
 # every couple of seconds is plenty to notice it ended.
 _CALL_POLL_INTERVAL_MS = 2000
+
+# How often, and how many times, to read the capture while nothing has been heard.
+# Five seconds apart puts several readings inside even a call that is cut short
+# after fifteen, which is how long the ones worth diagnosing have lasted.
+_SILENCE_SAMPLE_EVERY_S = 5.0
+_SILENCE_SAMPLES = 24
 
 # Every way Meet says no. The distinction matters: a denial is someone deciding,
 # while "can't join" is the call refusing anonymous guests outright - retrying
@@ -275,7 +285,21 @@ def _page_text(page: Page) -> str:
 
 
 def _contains_any(page_text: str, needles: tuple[str, ...]) -> bool:
-    return any(_normalize(needle) in page_text for needle in needles)
+    return _first_match(page_text, needles) is not None
+
+
+def _first_match(page_text: str, needles: tuple[str, ...]) -> str | None:
+    """The needle that matched, rather than only that one did.
+
+    Which phrase ended a call is the difference between the host hanging up, the
+    bot being removed and Meet returning the tab to its home screen, and those
+    call for different answers. Reported as the phrase itself, so a needle that
+    starts matching a screen it was never meant for is visible in the log.
+    """
+    for needle in needles:
+        if _normalize(needle) in page_text:
+            return needle
+    return None
 
 
 def _refusal_reason(page: Page) -> str | None:
@@ -300,49 +324,14 @@ def _refusal_reason(page: Page) -> str | None:
 
 
 class MeetMeetingRecorder(MeetingRecorder):
-    rtc_intercept_js_path: Path | None = None
     vad_observer_js_path: Path | None = None
-    audio_worklet_js_path: Path | None = None
 
     @model_validator(mode="after")
     def assemble_es_hosts(self) -> "MeetMeetingRecorder":
         """Constructs the ES_HOSTS URL after model validation."""
         settings = get_settings()
-        self.audio_worklet_js_path = self.audio_worklet_js_path or settings.AUDIO_WORKLET_JS_PATH
-        self.rtc_intercept_js_path = self.rtc_intercept_js_path or settings.RTC_INTERCEPT_JS_PATH
         self.vad_observer_js_path = self.vad_observer_js_path or settings.VAD_OBSERVER_MEET_JS_PATH
         return self
-
-    def prepare_injection(self, meeting_url: str, ws_url: str, session_id: str) -> tuple[str, str, list[dict], dict]:
-        """Builds the scripts injected into the page, pointed at this session's
-        audio server, which the caller has already started at ws_url."""
-        worklet_path = self.audio_worklet_js_path
-        intercept_path = self.rtc_intercept_js_path
-        vad_observer_path = self.vad_observer_js_path
-
-        assert worklet_path and intercept_path and vad_observer_path, "Expected worklet, intercept and vad observer paths to be set"
-
-        worklet_js = _load_text(worklet_path)
-        intercept_js = _load_text(intercept_path)
-        vad_observer_js = _load_text(vad_observer_path)
-        intercept_js = (
-            intercept_js
-            .replace("{{WS_URL}}", ws_url)
-            .replace("{{WORKLET_CODE}}", json.dumps(worklet_js))
-            # Meet reuses a handful of audio receivers between speakers, so no
-            # single receiver is a participant and slicing has nothing to cut.
-            # The mix is the track it cuts, using the VAD timeline for who.
-            .replace("{{MAIN_MIX}}", "true")
-        )
-        vad_events: list[dict] = []
-        vad_meta = {
-            "session_id": session_id,
-            "meeting_url": meeting_url,
-            "page_start_ms": None,
-            "page_end_ms": None,
-        }
-
-        return intercept_js, vad_observer_js, vad_events, vad_meta
 
     def _sign_in_for_meeting(
         self,
@@ -448,9 +437,9 @@ class MeetMeetingRecorder(MeetingRecorder):
         no such name - together with the account it signed in as, or None if it
         joined as a guest.
         """
-        name_input = page.get_by_role("textbox", name=re.compile(r"your name|seu nome", re.I))
+        name_input = page.get_by_role("textbox", name=re.compile(r"your name|seu nome", re.IGNORECASE))
         join_button = page.get_by_role(
-            "button", name=re.compile(r"ask to join|join now|pedir para participar|participar agora", re.I)
+            "button", name=re.compile(r"ask to join|join now|pedir para participar|participar agora", re.IGNORECASE)
         )
 
         self_name: str | None = _GUEST_NAME
@@ -568,7 +557,7 @@ class MeetMeetingRecorder(MeetingRecorder):
 
     def _wait_for_admission(self, page: Page, output_dir: str, logger) -> None:
         """Blocks until we are in the call, or until Meet says we are not getting in."""
-        in_call = page.get_by_role("button", name=re.compile(r"leave call|sair da chamada", re.I))
+        in_call = page.get_by_role("button", name=re.compile(r"leave call|sair da chamada", re.IGNORECASE))
         deadline = time.time() + _ADMISSION_TIMEOUT_S
 
         while True:
@@ -601,8 +590,9 @@ class MeetMeetingRecorder(MeetingRecorder):
             page.wait_for_timeout(_POLL_INTERVAL_MS)
 
     # Is run on a separate process
-    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, intercept_js, vad_observer_js, vad_events: list[dict], vad_meta: dict):
+    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, vad_observer_js, vad_events: list[dict], vad_meta: dict, audio_sink: str | None):
         logger = get_logger("recording.meet", output_dir)
+        main_track_path = os.path.join(output_dir, MAIN_TRACK_FILENAME)
         display = _start_virtual_display(logger)
         try:
             with sync_playwright() as p:
@@ -622,7 +612,14 @@ class MeetMeetingRecorder(MeetingRecorder):
                 )
                 launch = launch_kwargs(WINDOWS_CHROME, headless=not on_display, channel="chrome")
                 browser = p.chromium.launch(
-                    env=display.env() if on_display else None,  # type: ignore[union-attr]
+                    # PULSE_SINK is what puts this browser's audio into this
+                    # recording's sink and nothing else's, and it is read when
+                    # the process connects to Pulse - so it has to be here, at
+                    # the launch, and cannot be arranged afterwards.
+                    env=browser_env(
+                        audio_sink,
+                        display.env() if on_display else None,  # type: ignore[union-attr]
+                    ),
                     **{
                         **launch,
                         "args": launch["args"] + [
@@ -635,19 +632,6 @@ class MeetMeetingRecorder(MeetingRecorder):
                             # created from these devices.
                             "--use-fake-device-for-media-stream",
                             "--autoplay-policy=no-user-gesture-required",
-                            # Chrome 151 blocks a page on a public site from
-                            # opening a connection to a local address, so the
-                            # intercept's ws:// to this session's audio server
-                            # dies with ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS
-                            # and every hooked track is dropped on the floor. The
-                            # bundled Chromium the recorder used before the
-                            # persona work did not enforce it, which is why this
-                            # only appeared once the join started working.
-                            # Binding the server elsewhere does not help - the
-                            # check covers private addresses too - so the choice
-                            # is this flag or serving wss:// with a real
-                            # certificate.
-                            "--disable-features=LocalNetworkAccessChecks",
                             "--enable-logging",
                             "--v=1",
                             "--vmodule=*webrtc*=3,*libjingle*=3",
@@ -661,10 +645,9 @@ class MeetMeetingRecorder(MeetingRecorder):
                 context = browser.new_context(
                     bypass_csp=True, ignore_https_errors=True, **context_kwargs(WINDOWS_CHROME)
                 )
-                # First, so the page is already dressed when the intercept and the
-                # observer run - and so it covers the frames Meet opens later.
+                # First, so the page is already dressed when the observer runs -
+                # and so it covers the frames Meet opens later.
                 context.add_init_script(init_script(WINDOWS_CHROME))
-                context.add_init_script(intercept_js)
                 context.add_init_script(vad_observer_js)
                 context.grant_permissions([], origin=_meeting_origin(meeting_url))
 
@@ -692,13 +675,13 @@ class MeetMeetingRecorder(MeetingRecorder):
 
                     rpc_session.on("Network.responseReceived", _log_rpc)
 
-                    # The intercept and the observer report what they hooked
-                    # through the page console, and nothing else reports it: a
-                    # call that produces no audio looks identical, from the
-                    # outside, to a call where nobody spoke.
+                    # The observer reports what it hooked through the page
+                    # console, and nothing else reports it: a call in which the
+                    # roster was never found looks identical, from the outside,
+                    # to a call where nobody spoke.
                     page.on("console", lambda m: (
                         logger.info(f"[console] {m.type}: {m.text[:300]}")
-                        if ("[rtc-intercept]" in m.text or "[vad]" in m.text or m.type == "error")
+                        if ("[vad]" in m.text or m.type == "error")
                         else None
                     ))
                     page.on("pageerror", lambda e: logger.warning(
@@ -730,6 +713,9 @@ class MeetMeetingRecorder(MeetingRecorder):
                     _warn_unless_named_as_a_bot(_wait_for_roster(page, logger), logger)
 
                 logger.info("In the meeting, listening for audio activity...")
+                admitted_at = time.time()
+                if audio_sink:
+                    log_capture_status(audio_sink, main_track_path, logger, "on entering the call")
 
                 def _drain_vad_events() -> None:
                     try:
@@ -766,7 +752,23 @@ class MeetMeetingRecorder(MeetingRecorder):
 
                 last_vad_event_time_update = time.time()
                 last_vad_event_count = 0
+                # A call that is being recorded as silence is worth saying so
+                # while it is still running, and repeatedly: audio has been seen
+                # to start four seconds after admission on one call and never on
+                # the next, so a single reading cannot tell 'not yet' from
+                # 'never'. Sampling stops the moment the capture carries audio -
+                # the sink is then known to be the one the browser is playing
+                # into - and is capped so a long silent meeting does not fill
+                # its own log.
+                next_silence_sample_at = admitted_at + _SILENCE_SAMPLE_EVERY_S
+                silence_samples = 0
                 while True:
+                    if stop_requested(output_dir):
+                        logger.info(
+                            "Stop was requested for this recording; leaving the meeting and "
+                            "finalizing the audio"
+                        )
+                        break
                     _drain_vad_events()
                     # New events imply the meeting is still ongoing and the bot
                     # was not left by himself on the meeting
@@ -779,8 +781,39 @@ class MeetMeetingRecorder(MeetingRecorder):
                         logger.info("No audio activity detected for a prolonged period, assuming meeting ended")
                         break
 
-                    if _contains_any(_page_text(page), _MEETING_ENDED_TEXTS):
-                        logger.info("Meeting end detected (left the meeting or was removed)")
+                    if (
+                        audio_sink
+                        and silence_samples < _SILENCE_SAMPLES
+                        and time.time() >= next_silence_sample_at
+                    ):
+                        silence_samples += 1
+                        next_silence_sample_at = time.time() + _SILENCE_SAMPLE_EVERY_S
+                        elapsed = time.time() - admitted_at
+                        if log_capture_status(
+                            audio_sink, main_track_path, logger, f"{elapsed:.0f}s into the call"
+                        ):
+                            # Audio is flowing; nothing left for this to report.
+                            silence_samples = _SILENCE_SAMPLES
+                        elif silence_samples == _SILENCE_SAMPLES:
+                            logger.warning(
+                                f"Nothing audible has been captured in the {elapsed:.0f}s since "
+                                f"the bot was admitted; this recording is being written as "
+                                f"silence, and will transcribe as nothing"
+                            )
+
+                    ended_by = _first_match(_page_text(page), _MEETING_ENDED_TEXTS)
+                    if ended_by:
+                        logger.info(
+                            f"Meeting end detected (left the meeting or was removed), on the "
+                            f"page reading {ended_by!r} after "
+                            f"{time.time() - admitted_at:.0f}s in the call"
+                        )
+                        if audio_sink:
+                            log_capture_status(
+                                audio_sink, main_track_path, logger, "at the end of the call"
+                            )
+                        if debug:
+                            _screenshot(page, output_dir, "meet_ended")
                         break
 
                     if time.time() >= deadline:
