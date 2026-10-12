@@ -1,0 +1,8 @@
+{
+  "duration": 20,
+  "admission_delay": 2,
+  "outages": [[7, 11]],
+  "participants": [
+    {"id": "alice", "name": "Alice", "turns": [[2, 18]]}
+  ]
+}

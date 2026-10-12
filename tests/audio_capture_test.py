@@ -28,8 +28,10 @@ import pytest
 
 from gravai.recording.session_audio_capture import (
     MAIN_TRACK_ID,
+    SAMPLE_RATE,
     AudioCaptureError,
     SessionAudioCapture,
+    capture_is_audible,
     ensure_pulse_running,
 )
 
@@ -199,3 +201,40 @@ def test_a_capture_that_never_starts_leaves_no_sink_behind(tmp_path, monkeypatch
         capture.start()
 
     assert capture.sink_name not in _sinks()
+
+
+def _write_wav(path, sections: list[tuple[float, int]]) -> str:
+    """A wav of `(seconds, amplitude)` sections, written as ffmpeg writes one."""
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        for seconds, amplitude in sections:
+            frames = int(seconds * SAMPLE_RATE)
+            wf.writeframes(array("h", [amplitude] * frames).tobytes())
+    return str(path)
+
+
+def test_a_call_still_being_heard_reads_as_audible(tmp_path):
+    """What keeps a recording in a meeting whose speaking indicator went quiet."""
+    talking = _write_wav(tmp_path / "talking.wav", [(5.0, 8000)])
+
+    assert capture_is_audible(talking, 30.0) is True
+
+
+def test_only_the_tail_of_the_capture_is_asked(tmp_path):
+    """A meeting that has gone silent has to read as silent however loud it was.
+
+    The window is what makes this a liveness signal rather than a record of the
+    whole call: an hour of speech followed by everybody leaving would otherwise
+    keep answering 'somebody is still here' for as long as the file is open.
+    """
+    was_loud = _write_wav(tmp_path / "was_loud.wav", [(5.0, 8000), (40.0, 0)])
+
+    assert capture_is_audible(was_loud, 30.0) is False
+    assert capture_is_audible(was_loud, 60.0) is True
+
+
+def test_a_capture_that_cannot_be_measured_is_not_evidence_of_speech(tmp_path):
+    """No file yet, or no capture at all, leaves the page's signal to decide."""
+    assert capture_is_audible(str(tmp_path / "missing.wav"), 30.0) is False

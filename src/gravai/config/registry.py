@@ -47,6 +47,18 @@ class ProviderSpec:
 
 
 _PROVIDERS: dict[RecordingType, ProviderSpec] = {
+    RecordingType.SIMULATED_MEET: ProviderSpec(
+        recording_type=RecordingType.SIMULATED_MEET,
+        url_markers=("/simulated-meeting/meet/",),
+        recorder=MeetMeetingRecorder,
+        slice_session=Slicer.slice_and_create_session_teams_audio_track,
+    ),
+    RecordingType.SIMULATED_TEAMS: ProviderSpec(
+        recording_type=RecordingType.SIMULATED_TEAMS,
+        url_markers=("/simulated-meeting/teams/",),
+        recorder=TeamsMeetingRecorder,
+        slice_session=Slicer.slice_and_create_session_teams_audio_track,
+    ),
     RecordingType.TEAMS: ProviderSpec(
         recording_type=RecordingType.TEAMS,
         url_markers=("teams.live.com", "teams.microsoft.com"),

@@ -1,0 +1,38 @@
+# Use with: docker compose -f docker-compose.yaml -f docker-compose.simulation.yaml up --build
+services:
+  app:
+    environment:
+      DATABASE_PATH: /simulation-data/gravai.db
+      SAVE_DIR: /simulation-recordings
+    volumes:
+      - gravai-simulation-data:/simulation-data
+      - gravai-simulation-recordings:/simulation-recordings
+  meet-simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["uv", "run", "python", "-m", "gravai.simulation.server"]
+    command: ["--host", "0.0.0.0", "--provider", "meet", "--scenario", "/scenarios/meet/basic.json", "--artifacts", "/artifacts"]
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./scenarios:/scenarios:ro
+      - ./tmp/simulation/meet:/artifacts
+    init: true
+
+  teams-simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["uv", "run", "python", "-m", "gravai.simulation.server"]
+    command: ["--host", "0.0.0.0", "--provider", "teams", "--scenario", "/scenarios/teams/basic.json", "--artifacts", "/artifacts"]
+    ports:
+      - "8766:8765"
+    volumes:
+      - ./scenarios:/scenarios:ro
+      - ./tmp/simulation/teams:/artifacts
+    init: true
+
+volumes:
+  gravai-simulation-data:
+  gravai-simulation-recordings:

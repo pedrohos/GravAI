@@ -83,6 +83,12 @@ _AUDIBLE_PEAK_DBFS = -45.0
 #: What a capture of pure digital silence reads as, rather than -inf.
 _SILENCE_FLOOR_DBFS = -120.0
 
+#: How often a running recording asks its own capture whether anybody is still
+#: talking, and - the same number on purpose - how much of the tail each of
+#: those readings covers, so two consecutive readings leave no gap between them
+#: in which a sentence could go unheard.
+AUDIO_LIVENESS_EVERY_S = 30.0
+
 
 class AudioCaptureError(RuntimeError):
     """Raised when a recording's audio cannot be captured."""
@@ -237,6 +243,24 @@ def capture_peak_dbfs(wav_path: str, window_s: float = _PEAK_WINDOW_S) -> float 
     if peak == 0:
         return _SILENCE_FLOOR_DBFS
     return round(20.0 * math.log10(peak / 32768.0), 1)
+
+
+def capture_is_audible(wav_path: str, window_s: float = _PEAK_WINDOW_S) -> bool:
+    """Whether the capture has carried speech-level audio in its last `window_s`.
+
+    This is the liveness signal a call cannot hide from the recorder. The page's
+    speaking indicator stops for reasons that are not a meeting ending - a
+    layout that draws no participant tiles, an `evaluate` that has begun failing
+    - and a recording that reads that silence as 'everybody left' hangs up on a
+    call that is still going. The sink carries what the browser is playing, so
+    audio in it means somebody is still there.
+
+    A capture that cannot be measured - no file yet, or no capture at all -
+    answers False: it is no evidence of anybody speaking, and leaves the caller
+    with whatever the page had to say.
+    """
+    peak = capture_peak_dbfs(wav_path, window_s)
+    return peak is not None and peak > _AUDIBLE_PEAK_DBFS
 
 
 def browser_env(sink_name: str | None, base=None) -> dict[str, str]:

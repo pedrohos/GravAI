@@ -20,8 +20,10 @@ RUN apt-get update &&\
     apt-get install -y --no-install-recommends curl\
         ca-certificates gcc libasound-dev portaudio19-dev\
         libportaudio2 libportaudiocpp0 build-essential\
-        libcap2-bin pulseaudio ffmpeg x11vnc &&\
+        libcap2-bin pulseaudio ffmpeg x11vnc git &&\
     rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh
 
 # Fix dumpcap capabilities to run in unprivileged docker environments - required by tshark
 # RUN setcap -r /usr/bin/dumpcap && chmod 755 /usr/bin/dumpcap
@@ -48,9 +50,6 @@ RUN playwright install-deps
 RUN playwright install
 # bundled Chromium is rejected by Meet bot detection, so chrome is used instead
 RUN playwright install chrome
-
-# Everything aboved is cached
-COPY . /app
 
 # Re runs to install project
 RUN --mount=type=cache,target=/root/.cache/uv \

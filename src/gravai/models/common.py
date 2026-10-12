@@ -8,6 +8,8 @@ from pydantic import BaseModel
 class RecordingType(Enum):
     TEAMS = "teams"
     MEET = "meet"
+    SIMULATED_MEET = "simulated_meet"
+    SIMULATED_TEAMS = "simulated_teams"
 
 class ActionType(Enum):
     START = 0

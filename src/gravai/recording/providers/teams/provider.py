@@ -9,8 +9,10 @@ from pydantic import model_validator
 from gravai.config.logging_config import get_logger
 from gravai.config.settings import get_settings
 from gravai.recording.session_audio_capture import (
+    AUDIO_LIVENESS_EVERY_S,
     MAIN_TRACK_FILENAME,
     browser_env,
+    capture_is_audible,
     log_capture_status,
 )
 from gravai.jobs.stop_signal import stop_requested
@@ -145,6 +147,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
                 last_vad_event_time_update = time.time()
                 last_vad_event_count = 0
                 joined_meeting = False
+                next_audio_check_at = time.time() + AUDIO_LIVENESS_EVERY_S
                 while True:
                     if stop_requested(output_dir):
                         logger.info(
@@ -153,19 +156,40 @@ class TeamsMeetingRecorder(MeetingRecorder):
                         )
                         break
                     _drain_vad_events()
+                    # The speaking indicator is not the only thing that can go
+                    # quiet in a call that is still going: Teams drops the
+                    # voice-level element in the layouts that draw no
+                    # participant tiles, and a page whose `evaluate` has started
+                    # failing reads here exactly like an empty room. So the
+                    # capture is asked too, and counts as activity in its own
+                    # right - audio in this recording's sink means somebody is
+                    # still there, whatever the DOM says.
+                    audible = False
+                    if audio_sink and time.time() >= next_audio_check_at:
+                        next_audio_check_at = time.time() + AUDIO_LIVENESS_EVERY_S
+                        audible = capture_is_audible(main_track_path, AUDIO_LIVENESS_EVERY_S)
                     try:
                         # Updates last 'activity detected' timestamp. New events implies the meeting is still ongoing
                         # and the bot was not left by himself on the meeting
-                        if len(vad_events) != last_vad_event_count:
+                        if len(vad_events) != last_vad_event_count or audible:
                             if not joined_meeting:
                                 logger.info("Audio activity detected: successfully joined the meeting and started recording")
                                 joined_meeting = True
                             last_vad_event_time_update = time.time()
                             last_vad_event_count = len(vad_events)
-                        # Checks for inactivity in VAD events to determine if the meeting has likely ended,
-                        # as a fallback in case the end-of-meeting indicators are not detected
+                        # Checks for inactivity to determine if the meeting has likely ended, as a
+                        # fallback in case the end-of-meeting indicators are not detected. Both
+                        # signals have to have been quiet for the whole window to get here.
                         elif time.time() - last_vad_event_time_update > activity_timeout:
-                            logger.info("No audio activity detected for a prolonged period, assuming meeting ended")
+                            heard = (
+                                "nothing audible in the capture either"
+                                if audio_sink
+                                else "and there is no capture to consult"
+                            )
+                            logger.info(
+                                f"No audio activity detected for {activity_timeout}s "
+                                f"({heard}), assuming meeting ended"
+                            )
                             break
                         else:
                             # Check if the meeting was rejected by the host, which can happen if the bot is not allowed to join

@@ -31,8 +31,10 @@ from gravai.recording.common.human_input import (
 )
 from gravai.recording.common.vnc import CaptchaHandoff, VirtualDisplay
 from gravai.recording.session_audio_capture import (
+    AUDIO_LIVENESS_EVERY_S,
     MAIN_TRACK_FILENAME,
     browser_env,
+    capture_is_audible,
     log_capture_status,
 )
 from gravai.jobs.stop_signal import stop_requested
@@ -762,6 +764,7 @@ class MeetMeetingRecorder(MeetingRecorder):
                 # its own log.
                 next_silence_sample_at = admitted_at + _SILENCE_SAMPLE_EVERY_S
                 silence_samples = 0
+                next_audio_check_at = time.time() + AUDIO_LIVENESS_EVERY_S
                 while True:
                     if stop_requested(output_dir):
                         logger.info(
@@ -770,15 +773,36 @@ class MeetMeetingRecorder(MeetingRecorder):
                         )
                         break
                     _drain_vad_events()
+                    # The speaking indicator is not the only thing that can go
+                    # quiet in a call that is still going: it is read from the
+                    # rate of class mutation on a level indicator Meet only
+                    # draws in some layouts, and a page whose `evaluate` has
+                    # started failing reads here exactly like an empty room. So
+                    # the capture is asked too, and counts as activity in its
+                    # own right - audio in this recording's sink means somebody
+                    # is still there, whatever the DOM says.
+                    audible = False
+                    if audio_sink and time.time() >= next_audio_check_at:
+                        next_audio_check_at = time.time() + AUDIO_LIVENESS_EVERY_S
+                        audible = capture_is_audible(main_track_path, AUDIO_LIVENESS_EVERY_S)
                     # New events imply the meeting is still ongoing and the bot
                     # was not left by himself on the meeting
-                    if len(vad_events) != last_vad_event_count:
+                    if len(vad_events) != last_vad_event_count or audible:
                         last_vad_event_time_update = time.time()
                         last_vad_event_count = len(vad_events)
-                    # Checks for inactivity in VAD events to determine if the meeting has likely ended,
-                    # as a fallback in case the end-of-meeting indicators are not detected
+                    # Checks for inactivity to determine if the meeting has likely ended, as a
+                    # fallback in case the end-of-meeting indicators are not detected. Both
+                    # signals have to have been quiet for the whole window to get here.
                     elif time.time() - last_vad_event_time_update > activity_timeout:
-                        logger.info("No audio activity detected for a prolonged period, assuming meeting ended")
+                        heard = (
+                            "nothing audible in the capture either"
+                            if audio_sink
+                            else "and there is no capture to consult"
+                        )
+                        logger.info(
+                            f"No audio activity detected for {activity_timeout}s "
+                            f"({heard}), assuming meeting ended"
+                        )
                         break
 
                     if (

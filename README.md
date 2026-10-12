@@ -326,3 +326,9 @@ Done since the last release: Google Meet as a provider, concurrent recordings ea
 Open to contributions as long as they do not divert from the project's proposed vision, purpose and when it is well intended.
 
 ;)
+## Local meeting simulations
+
+Use the separate Google Meet and Teams environments to test the backend without
+provider accounts. They exercise the production browser join flows, speaker
+observers, and audio capture using real WebRTC audio and repeatable scenarios.
+See [setup, scenarios, and fidelity limits](docs/meeting-simulation.md).

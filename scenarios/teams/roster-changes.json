@@ -1,0 +1,12 @@
+{
+  "duration": 15,
+  "admission_delay": 1,
+  "teams_shadow_dom": true,
+  "outages": [[7, 9]],
+  "participants": [
+    {"id": "alice", "name": "Alice", "frequency": 440, "turns": [[1, 6], [10, 14]]},
+    {"id": "bob", "name": "Bob", "frequency": 660, "presence": [[3, 11]], "turns": [[4, 10]]},
+    {"id": "returning", "name": "Returning guest", "frequency": 880,
+     "presence": [[0, 4], [10, 15]], "turns": [[1, 3], [11, 14]]}
+  ]
+}
