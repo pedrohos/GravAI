@@ -1,12 +1,18 @@
 import os
 import re
 import subprocess
+from glob import glob
 from pathlib import Path
+
 import requests
 
-from gravai.config.settings import Settings
 from gravai.config.logging_config import get_logger
-from gravai.models.models import Session, ParticipantDataTransc, Transcription, TranscriptedSession
+from gravai.models.common import (
+    ParticipantDataTransc,
+    Session,
+    TranscriptedSession,
+    Transcription,
+)
 from gravai.transcribe.errors import WhisperError
 from gravai.transcribe.formatter import format_and_save_single_segment
 
@@ -81,13 +87,90 @@ def to_meeting_time(offset: float, segments: list, at_segment_start: bool = Fals
         consumed += duration
     return segments[-1].end
 
+def _write_transcription_files(wav_file_path: str, text: str, segments: list) -> Transcription:
+    """Writes the two files a transcription is made of, next to its audio.
+
+    Every transcript in a session - one per participant, plus the meeting as a
+    whole - is named after the wav it came from, so the pair can always be found
+    from the track and never has to be guessed at.
+    """
+    track_path = Path(wav_file_path)
+    transcription_text_output_path = str(
+        track_path.with_name(f"{track_path.stem}_transcription_text.txt")
+    )
+    segments_input_path = track_path.with_name(f"{track_path.stem}_transcription_segments.txt")
+    with open(transcription_text_output_path, "w") as f:
+        f.write(text)
+    # Returns the .json path it renamed to, which is what actually exists.
+    transcription_segments_output_path = str(
+        format_and_save_single_segment(segments_input_path, segments)
+    )
+    return Transcription(
+        transcription_text_file_path=transcription_text_output_path,
+        transcription_segments_file_path=transcription_segments_output_path,
+    )
+
+
+def _transcribe_or_skip_silence(
+    source_path: str,
+    whisper_host: str,
+    whisper_port: int,
+    language: str | None,
+    logger,
+    label: str,
+) -> dict:
+    """Whisper's answer for one file, or an empty one when it is certainly silent.
+
+    The gate is here rather than at the call sites because it protects every one
+    of them for the same reason: asked to transcribe silence, whisper answers
+    with sentences nobody said.
+    """
+    if is_silent(source_path):
+        logger.info(
+            f"Skipping whisper for {label}: {os.path.basename(source_path)} peaks at or below "
+            f"{_SILENCE_PEAK_DBFS} dBFS"
+        )
+        return {"text": "", "segments": []}
+
+    logger.info(f"Transcribing {label}")
+    return transcribe(source_path, whisper_host, int(whisper_port), language=language)
+
+
+def _resolve_main_track(session: Session) -> str | None:
+    """The mixed track of a session, from the session or from its directory.
+
+    Sessions sliced before main_track_path existed do not carry one, and their
+    metadata is still on disk and still worth transcribing, so the directory is
+    searched as a fallback. More than one match is left alone: which mix a
+    directory holding two sessions belongs to is not answerable here, and slicing
+    already refuses that case for the same reason.
+    """
+    if session.main_track_path and os.path.exists(session.main_track_path):
+        return session.main_track_path
+
+    session_dir = _session_dir(session)
+    if not session_dir:
+        return None
+    candidates = sorted(glob(os.path.join(session_dir, "track_mainAudio*.wav")))
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _session_dir(session: Session) -> str | None:
+    """Directory a session's files live in, from whichever path it carries."""
+    if session.main_track_path:
+        return os.path.dirname(session.main_track_path)
+    if session.tracks:
+        return os.path.dirname(next(iter(session.tracks.values())).track.wav_file_path)
+    return None
+
+
 def transcribe_meeting_tracks(
         session: Session,
         whisper_host: str,
         whisper_port: int,
         language: str | None = None,
     ):
-    log_dir = os.path.dirname(next(iter(session.tracks.values())).track.wav_file_path) if session.tracks else None
+    log_dir = _session_dir(session)
     logger = get_logger("transcribe", log_dir)
 
     logger.info(f"Transcription started for session {session.session_id} ({len(session.tracks)} track(s))")
@@ -102,16 +185,14 @@ def transcribe_meeting_tracks(
         segments_map = participant_data.track.speech_segments
         source_path = speech_path if speech_path and os.path.exists(speech_path) else wav_file_path
 
-        if is_silent(source_path):
-            logger.info(
-                f"Skipping whisper for participant {participant_data.participant_name} "
-                f"(id: {participant_id}): {os.path.basename(source_path)} peaks at or below "
-                f"{_SILENCE_PEAK_DBFS} dBFS"
-            )
-            transcription = {"text": "", "segments": []}
-        else:
-            logger.info(f"Transcribing track for participant {participant_data.participant_name} (id: {participant_id})")
-            transcription = transcribe(source_path, whisper_host, int(whisper_port), language=language)
+        transcription = _transcribe_or_skip_silence(
+            source_path,
+            whisper_host,
+            whisper_port,
+            language,
+            logger,
+            f"participant {participant_data.participant_name} (id: {participant_id})",
+        )
 
         transcription_text = transcription.get("text", "")
         transcription_segments = transcription.get("segments") or []
@@ -126,34 +207,75 @@ def transcribe_meeting_tracks(
                         segment[key] = round(
                             to_meeting_time(float(segment[key]), segments_map, at_start), 3
                         )
-        track_path = Path(wav_file_path)
-        transcription_text_output_path = str(track_path.with_name(f"{track_path.stem}_transcription_text.txt"))
-        segments_input_path = track_path.with_name(f"{track_path.stem}_transcription_segments.txt")
-        with open(transcription_text_output_path, "w") as f:
-            f.write(transcription_text)
-        # Returns the .json path it renamed to, which is what actually exists.
-        transcription_segments_output_path = str(
-            format_and_save_single_segment(segments_input_path, transcription_segments)
-        )
 
         logger.info(f"Transcription finished for participant {participant_data.participant_name} (id: {participant_id})")
         tracks[participant_id] = ParticipantDataTransc(
             participant_id=participant_id,
             participant_name=participant_data.participant_name,
             track=participant_data.track,
-            transcription=Transcription(
-                transcription_text_file_path=transcription_text_output_path,
-                transcription_segments_file_path=transcription_segments_output_path
-            )
+            transcription=_write_transcription_files(
+                wav_file_path, transcription_text, transcription_segments
+            ),
         )
+
+    meeting_transcription = _transcribe_meeting(
+        session, whisper_host, whisper_port, language, logger
+    )
 
     logger.info(f"Transcription completed for session {session.session_id}")
     return TranscriptedSession(
         session_id=session.session_id,
         session_start=session.session_start,
         session_end=session.session_end,
-        tracks=tracks
+        tracks=tracks,
+        main_track_path=session.main_track_path,
+        meeting_transcription=meeting_transcription,
     )
+
+
+def _transcribe_meeting(
+    session: Session,
+    whisper_host: str,
+    whisper_port: int,
+    language: str | None,
+    logger,
+) -> Transcription | None:
+    """Transcribes the meeting from its mixed track, in one pass.
+
+    The per-participant transcripts say who said what but each one is that voice
+    alone, cut into the stretches the VAD marked - so a sentence the observer
+    missed the start of, or a moment two people talk over each other, reads worse
+    there than it does on the mix. This is the same meeting read as one
+    conversation, offsets already on the meeting's timeline because the mix was
+    never cut.
+
+    Its silence gate matters less than the participants' - a real meeting is not
+    silent - but it is what keeps a recording that captured nothing from coming
+    back with invented speech.
+    """
+    main_track_path = _resolve_main_track(session)
+    if not main_track_path:
+        logger.warning(
+            f"No mixed track found for session {session.session_id}; "
+            f"skipping the whole-meeting transcription"
+        )
+        return None
+
+    transcription = _transcribe_or_skip_silence(
+        main_track_path,
+        whisper_host,
+        whisper_port,
+        language,
+        logger,
+        f"the whole meeting ({os.path.basename(main_track_path)})",
+    )
+    written = _write_transcription_files(
+        main_track_path,
+        transcription.get("text", ""),
+        transcription.get("segments") or [],
+    )
+    logger.info(f"Whole-meeting transcription written to {written.transcription_text_file_path}")
+    return written
 
 
 def transcribe(

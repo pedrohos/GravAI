@@ -1,6 +1,7 @@
+import json
 from pathlib import Path
 from urllib.parse import urlparse
-import json
+
 
 def _meeting_origin(meeting_url: str) -> str:
     parsed = urlparse(meeting_url)

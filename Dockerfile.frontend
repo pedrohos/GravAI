@@ -1,0 +1,51 @@
+# The front end as a container of its own: a Next.js server and the built page.
+#
+# It is the only way to get the page - the API no longer serves a copy of it,
+# because a Next app is a running server rather than a directory of files that
+# FastAPI could mount.
+#
+# The reason it is a server and not nginx over static files: the browser cannot
+# resolve `app` on the Docker network, so a page that called the API itself had
+# to be told a published host address and was then cross-origin, needing the
+# API's CORS allowlist. This server makes that call instead, from inside the
+# network, and the browser only ever talks to this origin. See lib/proxy.ts.
+
+FROM node:22-alpine AS build
+WORKDIR /build
+
+# The manifests first, so a change to the page does not reinstall the packages.
+COPY src/frontend/package.json src/frontend/package-lock.json ./
+RUN npm ci
+
+COPY src/frontend/ ./
+RUN npm run build
+
+# `output: "standalone"` traces the dependencies actually reached and emits a
+# server that runs without node_modules, so the runtime image carries neither
+# the installed packages nor the toolchain that built them.
+FROM node:22-alpine
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# Where this server should call the API. Resolved from inside the Docker network
+# and not by the browser, so it is a service name - `http://app:8000`, and not
+# the host address the old nginx image needed. Read per request rather than at
+# build time, so one image can be pointed at a different API without being
+# rebuilt - see the note in next.config.ts about why it is not a rewrite.
+ENV GRAVAI_API_URL=http://app:8000
+
+COPY --from=build /build/.next/standalone ./
+COPY --from=build /build/.next/static ./.next/static
+
+USER node
+EXPOSE 3000
+
+# Answers for this server alone, deliberately: whether the API behind it is up
+# is a different question, and one the page reports where somebody can see it.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+    CMD wget -q -O /dev/null http://127.0.0.1:3000/healthz || exit 1
+
+CMD ["node", "server.js"]

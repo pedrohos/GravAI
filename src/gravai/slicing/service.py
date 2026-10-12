@@ -1,7 +1,7 @@
 
 from gravai.config.logging_config import get_logger
-from gravai.models.models import RecordingType, Session
-from gravai.registry import get_provider
+from gravai.config.registry import get_provider
+from gravai.models.common import RecordingType, Session
 from gravai.slicing.slice import Slicer
 
 

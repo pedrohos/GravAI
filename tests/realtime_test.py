@@ -2,10 +2,12 @@ import os
 
 import pytest
 
-from gravai.models.models import RecordingType
+from gravai.models.common import RecordingType
 from gravai.recording.service import record_meeting as service_record_meeting
 from gravai.slicing.service import slice_track as service_slice_track
-from gravai.transcribe.service import transcribe_meeting_tracks as service_transcribe_meeting_tracks
+from gravai.transcribe.service import (
+    transcribe_meeting_tracks as service_transcribe_meeting_tracks,
+)
 
 _TEAMS_MEETING_URL = os.environ.get("GRAVAI_TEST_TEAMS_MEETING_URL")
 _MEET_MEETING_URL = os.environ.get("GRAVAI_TEST_MEET_MEETING_URL")

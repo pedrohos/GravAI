@@ -6,6 +6,11 @@ dist/
 wheels/
 *.egg-info
 
+# Node, for the front end in src/frontend
+node_modules/
+.next/
+next-env.d.ts
+
 # Virtual environments
 .venv
 .env
@@ -23,3 +28,10 @@ scripts/
 # A signed-in browser profile holds live Google session cookies - committing it
 # would publish the bot account's credentials.
 .bot-profile/
+
+# The job queue and the catalogue of recordings: state, and it names paths on
+# whichever machine wrote it.
+data/
+*.db
+*.db-wal
+*.db-shm

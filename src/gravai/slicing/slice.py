@@ -1,22 +1,22 @@
-import os
 import json
-from datetime import datetime
+import os
 import subprocess
-from gravai.models.models import (
-    SessionDataDTO,
-    TrackInfoDTO,
-    ActionType,
-    ParticipantData,
-    SpeechSegment,
-    Track,
-    Session
-)
-from collections import defaultdict
-from pathlib import Path
 import time
+from collections import defaultdict
+from datetime import datetime
 from glob import glob
+from pathlib import Path
 
 from gravai.config.logging_config import get_logger
+from gravai.models.common import (
+    ActionType,
+    ParticipantData,
+    Session,
+    SessionDataDTO,
+    SpeechSegment,
+    Track,
+    TrackInfoDTO,
+)
 
 
 def _participant_track_path(audio_tracks_path: str, participant_id: str) -> str:
@@ -328,7 +328,7 @@ def _write_speech_track(main_track_path: str, output_path: str, segments: list[t
         check=True,
     )
 
-class Slicer():
+class Slicer:
     @staticmethod
     def slice_audio_tracks_teams(audio_tracks_path: str, group_slices_by_name: bool = True):
         session_data_dto = _extract_session_dto(audio_tracks_path)
@@ -395,5 +395,10 @@ class Slicer():
             session_id=session_data_dto.session_id,
             session_start=session_data_dto.start_time,
             session_end=session_data_dto.end_time,
-            tracks=session_tracks
+            tracks=session_tracks,
+            # The mix the participant tracks were cut from, so that transcription
+            # can also read the meeting as one conversation. Resolved here rather
+            # than re-globbed later: this is the one place that already knows
+            # which of the files in the directory the slicing actually used.
+            main_track_path=os.path.join(audio_tracks_path, session_data_dto.main_track_name),
         )

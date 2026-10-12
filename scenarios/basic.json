@@ -1,0 +1,9 @@
+{
+  "duration": 30,
+  "admission_delay": 1,
+  "participants": [
+    {"id": "alice", "name": "Alice", "frequency": 440, "turns": [[2, 8], [14, 20]]},
+    {"id": "bob", "name": "Bob", "frequency": 660, "turns": [[7, 13], [23, 27]]},
+    {"id": "silent", "name": "Silent participant", "turns": []}
+  ]
+}

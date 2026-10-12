@@ -42,13 +42,13 @@ import shutil
 import socket
 import subprocess
 import time
+from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from secrets import token_urlsafe
-from typing import Callable, Mapping
 
 # The record a waiting challenge leaves in the session directory, so that
 # something other than a log tail can find it - the API reads these to answer
@@ -81,7 +81,7 @@ _TERMINATE_GRACE_S = 5.0
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 @lru_cache(maxsize=1)
@@ -258,7 +258,7 @@ class VirtualDisplay:
         self._process = None
         self._display = None
 
-    def __enter__(self) -> "VirtualDisplay":
+    def __enter__(self) -> VirtualDisplay:
         self.start()
         return self
 
@@ -635,7 +635,7 @@ class CaptchaHandoff:
             # directory to make it easier to look up.
             "vnc_password": endpoint.password if endpoint.password_is_generated else None,
             "screenshot_path": shot,
-            "expires_at": datetime.fromtimestamp(deadline, timezone.utc).isoformat(timespec="seconds"),
+            "expires_at": datetime.fromtimestamp(deadline, UTC).isoformat(timespec="seconds"),
             "updated_at": _now(),
         }
         try:
@@ -701,6 +701,6 @@ def _has_expired(expires_at: str | None) -> bool:
     if not expires_at:
         return False
     try:
-        return datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc)
+        return datetime.fromisoformat(expires_at) <= datetime.now(UTC)
     except ValueError:
         return False

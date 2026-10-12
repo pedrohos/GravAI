@@ -1,0 +1,6 @@
+{
+  "duration": 5,
+  "admission_delay": 1,
+  "deny": true,
+  "participants": [{"id": "host", "name": "Host"}]
+}

@@ -12,12 +12,12 @@ single surviving pair belonged to the bot's own tile animating as it rendered,
 which is 1.4s of silence, so the transcript came back empty instead of short.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from gravai.models.models import ActionType, SessionDataDTO, TrackInfoDTO
+from gravai.models.common import ActionType, SessionDataDTO, TrackInfoDTO
 from gravai.slicing.slice import _find_participant_tracks, _process_participant_data
 
-START = datetime(2026, 8, 19, 19, 50, 28, tzinfo=timezone.utc)
+START = datetime(2026, 8, 19, 19, 50, 28, tzinfo=UTC)
 
 
 def _event(name: str, element_id: str, offset_s: float, speaking: bool) -> TrackInfoDTO:

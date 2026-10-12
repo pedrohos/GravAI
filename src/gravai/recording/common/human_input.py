@@ -52,7 +52,7 @@ def click_if_present(page, name: str, timeout: float = 3000, roles=("button", "l
     each of `roles` in turn - Google renders the declining half of a dialog as
     plain blue text, which is a link about as often as it is a button.
     """
-    pattern = re.compile(name, re.I)
+    pattern = re.compile(name, re.IGNORECASE)
     for role in roles:
         try:
             control = page.get_by_role(role, name=pattern).first

@@ -1,32 +1,26 @@
+import os
+from functools import lru_cache
 from importlib import resources
-from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import Field, FilePath, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from dotenv import load_dotenv
-from functools import lru_cache
 
-load_dotenv()
+# Which file the settings come out of. Overridable so that a test - and the
+# configuration routes, which write this same file back - can point at one of
+# their own; unset, it is .env in the working directory, as it has always been.
+ENV_FILE = os.environ.get("GRAVAI_ENV_FILE", ".env")
+
+load_dotenv(ENV_FILE)
 
 class Settings(BaseSettings):
     """Application configuration from environment variables"""
-    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding='utf-8', extra='ignore')
 
     DEBUG_GRAVAI: bool = Field(
         False,
         description="Enable debug mode",
         alias="DEBUG_GRAVAI",
-    )
-
-    WS_HOST: str = Field(
-        "127.0.0.1",
-        min_length=1,
-        description=(
-            "Host the per-recording audio WebSocket server binds to. Its port is "
-            "assigned by the OS, one per recording, so simultaneous recordings "
-            "never contend for it."
-        ),
-        alias="WS_HOST",
     )
 
     SAVE_DIR: str = Field(
@@ -36,10 +30,30 @@ class Settings(BaseSettings):
         alias="SAVE_DIR",
     )
 
-    RTC_INTERCEPT_JS_PATH: FilePath = str(resources.files("gravai.recording") / "common" / "rtc_intercept.js")
+    DATABASE_PATH: str = Field(
+        "./data/gravai.db",
+        min_length=1,
+        description=(
+            "SQLite file holding the job queue and the catalogue of recordings. It "
+            "records what was asked for and what came of it - the audio, the tracks "
+            "and the transcripts stay in SAVE_DIR and are only pointed at from here - "
+            "so putting it on a volume is what makes a restart remember anything."
+        ),
+        alias="DATABASE_PATH",
+    )
+
+    JOB_LOG_TAIL_LINES: int = Field(
+        400,
+        gt=0,
+        description=(
+            "How many lines of a session log GET /jobs/{id}/log returns by default. A "
+            "meeting writes a long log and the interesting part is the end of it."
+        ),
+        alias="JOB_LOG_TAIL_LINES",
+    )
+
     VAD_OBSERVER_TEAMS_JS_PATH: FilePath = str(resources.files("gravai.recording") / "providers" / "teams" / "vad_observer.js")
     VAD_OBSERVER_MEET_JS_PATH: FilePath = str(resources.files("gravai.recording") / "providers" / "meet" / "vad_observer.js")
-    AUDIO_WORKLET_JS_PATH: FilePath = str(resources.files("gravai.recording") / "common" / "audio_worklet_processor.js")
 
     GOOGLE_ACCOUNT_EMAIL: str = Field(
         "",
@@ -141,6 +155,27 @@ class Settings(BaseSettings):
         ),
         alias="WHISPER_LANGUAGE",
     )
+
+    CORS_ALLOW_ORIGINS: str = Field(
+        "",
+        description=(
+            "Origins allowed to call this API from a browser, comma separated. Empty "
+            "allows none, which is the default and is correct for the shipped setup: "
+            "the front end container calls this API from its own server over the Docker "
+            "network, not from the browser, so nothing is cross-origin. Only fill this "
+            "in for a deployment that puts a browser on this API directly. Note what an "
+            "entry here grants: this API has no authentication, so any page on a listed "
+            "origin can start recordings, read every transcript and change the settings. "
+            "List the exact origins and nothing else - '*' would hand that to every "
+            "website its users visit."
+        ),
+        alias="CORS_ALLOW_ORIGINS",
+    )
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """CORS_ALLOW_ORIGINS as a list, empty entries dropped."""
+        return [origin.strip() for origin in self.CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
 
     LOG_LEVEL: str = Field(
         "INFO",

@@ -20,10 +20,10 @@ from gravai.recording.common.google_sign_in import (
     _PASSWORD_SELECTORS,
     GoogleCaptchaError,
     GoogleSignInError,
-    captcha_visible,
     _blocking_reason,
     _on_sign_in_screen,
     _wait_for_field,
+    captcha_visible,
     configured_credentials,
 )
 
