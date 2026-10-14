@@ -16,6 +16,7 @@ next-env.d.ts
 .env
 .pytest_cache
 *.png
+!src/frontend/public/icons/app-icon.png
 *.wav
 *.weba
 *.ipynb
