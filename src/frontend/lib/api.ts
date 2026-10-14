@@ -114,6 +114,11 @@ export const api = {
   deleteRecording: (id: string) =>
     request<null>(`/recordings/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
+  deleteTranscription: (id: string) =>
+    request<null>(`/recordings/${encodeURIComponent(id)}/transcription`, { method: "DELETE" }),
+  deleteRecordingAndTranscription: (id: string) =>
+    request<null>(`/recordings/${encodeURIComponent(id)}/files`, { method: "DELETE" }),
+
   captchaChallenges: () => request<CaptchaChallenge[]>("/captcha_challenges"),
 
   getConfig: () => request<ConfigResponse>("/config"),

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import { Pill } from "@/components/Pill";
 import { SegmentsDrawer } from "@/components/SegmentsDrawer";
@@ -20,6 +20,7 @@ export default function RecordingPage() {
   const recordingId = decodeURIComponent(id);
   const router = useRouter();
   const { attempt } = useToast();
+  const [deleting, setDeleting] = useState(false);
 
   // Two calls, so one fetcher: the page has nothing to show until both land.
   const fetcher = useCallback(
@@ -60,6 +61,26 @@ export default function RecordingPage() {
     if (gone) router.push("/recordings");
   }
 
+  async function deleteContent(both: boolean) {
+    const warning = both
+      ? "Delete this recording and all its transcriptions? Audio and transcript files will be permanently deleted."
+      : "Delete all transcriptions for this recording? Audio will be kept.";
+    if (!confirm(warning)) return;
+    setDeleting(true);
+    try {
+      const deleted = await attempt(
+        () => (both ? api.deleteRecordingAndTranscription(recordingId) : api.deleteTranscription(recordingId)).then(() => true),
+        both ? "Recording and transcription deleted." : "Transcription deleted."
+      );
+      if (deleted) {
+        if (both) router.push("/recordings");
+        else await refresh();
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   if (error && !data) {
     return (
       <>
@@ -87,7 +108,7 @@ export default function RecordingPage() {
   const transcribeButton = (
     <button
       className="small"
-      disabled={transcribing}
+      disabled={transcribing || deleting}
       onClick={() => void transcribeAgain(recording.session_dir)}
     >
       {transcribing ? "Transcribing…" : hasTranscript ? "Transcribe again" : "Transcribe"}
@@ -174,6 +195,22 @@ export default function RecordingPage() {
             one pass over the mixed track: overlaps intact, no speaker names
           </span>
           {transcribeButton}
+        </div>
+        <div className="row" style={{ marginBottom: 14 }}>
+          <button
+            className="small delete-transcription"
+            disabled={deleting || transcribing || jobs.some((job) => ACTIVE_STATUSES.includes(job.status)) || ["recording", "processing"].includes(recording.status) || !hasTranscript}
+            onClick={() => void deleteContent(false)}
+          >
+            Delete transcription
+          </button>
+          <button
+            className="small delete-both"
+            disabled={deleting || transcribing || jobs.some((job) => ACTIVE_STATUSES.includes(job.status)) || ["recording", "processing"].includes(recording.status)}
+            onClick={() => void deleteContent(true)}
+          >
+            Delete recording and transcription
+          </button>
         </div>
         {recording.main_track_path && (
           <audio controls preload="none" src={audioUrl.meeting(recording.id)} />

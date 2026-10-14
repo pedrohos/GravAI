@@ -594,3 +594,18 @@ def delete_recording(recording_id: str) -> bool:
     with connect() as conn:
         cursor = conn.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
     return cursor.rowcount > 0
+
+
+def delete_transcripts(recording_id: str) -> bool:
+    """Clear meeting and speaker transcripts while keeping audio and timings."""
+    with connect() as conn:
+        cursor = conn.execute(
+            "UPDATE recordings SET meeting_transcript_text = NULL, "
+            "meeting_transcript_segments = NULL, updated_at = ? WHERE id = ?",
+            (datetime.now(UTC).isoformat(), recording_id),
+        )
+        conn.execute(
+            "UPDATE participants SET transcript_text = NULL, transcript_segments = NULL "
+            "WHERE recording_id = ?", (recording_id,),
+        )
+    return cursor.rowcount > 0

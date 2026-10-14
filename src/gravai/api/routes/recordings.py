@@ -10,6 +10,7 @@ the end here that stream it.
 """
 
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import FileResponse
@@ -128,3 +129,54 @@ def delete_recording(recording_id: str) -> None:
     """Forgets a meeting. Its audio and transcripts on disk are left alone."""
     if not store.delete_recording(recording_id):
         raise HTTPException(status_code=404, detail=f"No recording with id {recording_id}.")
+
+
+def _deletable_recording(recording_id: str) -> dict:
+    row = store.get_recording(recording_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No recording with id {recording_id}.")
+    active_jobs = [
+        job for job in store.active_jobs()
+        if not job.status.is_terminal and (
+            job.recording_id == recording_id
+            or job.session_dir == row["session_dir"]
+            or job.params.get("tracks_output_dir") == row["session_dir"]
+        )
+    ]
+    if row["status"] in {"recording", "processing"} or active_jobs:
+        raise HTTPException(status_code=409, detail="Wait for recording and transcription jobs to finish before deleting.")
+    return row
+
+
+def _delete_files(row: dict, *, audio: bool) -> None:
+    # Derive only pipeline-owned filenames from catalogued tracks. Keep session
+    # metadata and unrelated files, and never follow a directory supplied by HTTP.
+    tracks = {row.get("main_track_path")}
+    for participant in row["participants"]:
+        tracks.update((participant.get("track_path"), participant.get("speech_track_path")))
+    paths = set()
+    for track in filter(None, tracks):
+        path = Path(track)
+        if audio:
+            paths.add(path)
+        for suffix in ("_transcription_text.txt", "_transcription_segments.txt", "_transcription_segments.json"):
+            paths.add(path.with_name(path.stem + suffix))
+    with handled("DELETE /recordings files", "the recording files"):
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+
+@router.delete("/{recording_id}/transcription", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transcription(recording_id: str) -> None:
+    """Delete meeting and speaker transcripts, retaining recorded audio."""
+    row = _deletable_recording(recording_id)
+    _delete_files(row, audio=False)
+    store.delete_transcripts(recording_id)
+
+
+@router.delete("/{recording_id}/files", status_code=status.HTTP_204_NO_CONTENT)
+def delete_recording_and_transcription(recording_id: str) -> None:
+    """Delete catalogued audio and transcripts and remove the catalogue entry."""
+    row = _deletable_recording(recording_id)
+    _delete_files(row, audio=True)
+    store.delete_recording(recording_id)

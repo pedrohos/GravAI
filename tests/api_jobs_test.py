@@ -248,3 +248,42 @@ def test_the_origin_list_is_read_from_one_comma_separated_setting(
         assert get_settings().cors_allow_origins == expected
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("both", [False, True])
+def test_delete_transcription_and_optional_audio(client, tmp_path, both):
+    track = tmp_path / "meeting.wav"
+    track.write_bytes(b"audio")
+    text = tmp_path / "meeting_transcription_text.txt"
+    segments = tmp_path / "meeting_transcription_segments.json"
+    text.write_text("hello")
+    segments.write_text("[]")
+    unrelated = tmp_path / "notes.txt"
+    unrelated.write_text("keep")
+    store.upsert_recording("delete-me", str(tmp_path), "complete",
+                           main_track_path=str(track), meeting_transcript_text="hello")
+    store.replace_participants("delete-me", [{
+        "participant_id": "speaker", "track_path": str(track),
+        "transcript_text": "hello", "transcript_segments": [],
+        "segments": [{"start": 0, "end": 1}],
+    }])
+    route = "files" if both else "transcription"
+    assert client.delete(f"/recordings/delete-me/{route}").status_code == 204
+    assert not text.exists() and not segments.exists()
+    assert unrelated.exists()
+    assert track.exists() is not both
+    recording = store.get_recording("delete-me")
+    if both:
+        assert recording is None
+    else:
+        assert recording["meeting_transcript_text"] is None
+        assert recording["participants"][0]["transcript_text"] is None
+        assert recording["participants"][0]["transcript_segments"] is None
+        assert recording["participants"][0]["segments"] == [{"start": 0, "end": 1}]
+
+
+@pytest.mark.parametrize("route", ["files", "transcription"])
+def test_delete_content_missing_or_active_recording(client, tmp_path, route):
+    assert client.delete(f"/recordings/missing/{route}").status_code == 404
+    store.upsert_recording("busy", str(tmp_path), "recording")
+    assert client.delete(f"/recordings/busy/{route}").status_code == 409

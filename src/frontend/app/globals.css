@@ -298,3 +298,8 @@ audio { width: 100%; height: 34px; margin-top: 10px; filter: invert(0.9) hue-rot
   border: 1px solid var(--border);
   color: var(--text-dim);
 }
+
+button.delete-transcription { background: #303640; color: var(--bad); }
+button.delete-transcription:hover:not(:disabled) { background: #3b424e; border-color: var(--bad); }
+button.delete-both { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+button.delete-both:hover:not(:disabled) { background: #991b1b; border-color: #f87171; }
