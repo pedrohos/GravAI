@@ -1,14 +1,20 @@
+from __future__ import annotations
+
 import os
 import re
 import time
+from logging import Logger
 from multiprocessing import Queue
 from pathlib import Path
+from typing import Any
 
 from playwright.sync_api import Page, sync_playwright
 from pydantic import model_validator
 
 from gravai.config.logging_config import get_logger
 from gravai.config.settings import get_settings
+from gravai.jobs.stop_signal import stop_requested
+from gravai.models.events import RecorderResult, VadEvent, VadMetadata
 from gravai.recording.common.browser_persona import (
     WINDOWS_CHROME,
     apply_persona,
@@ -37,7 +43,6 @@ from gravai.recording.session_audio_capture import (
     capture_is_audible,
     log_capture_status,
 )
-from gravai.jobs.stop_signal import stop_requested
 from gravai.recording.utils import _meeting_origin, _write_vad_timeline
 
 from ..provider_base import MeetingRecorder
@@ -59,11 +64,12 @@ _GUEST_NAME = "Bot de Gravação de Pedro Silva"
 _BOT_NAME_PREFIX = "bot"
 
 
-def _names_the_bot_could_be(roster) -> list[str]:
+def _names_the_bot_could_be(roster: list[dict[str, Any]] | None) -> list[str]:
     return [
-        entry.get("participantName")
+        name
         for entry in (roster or [])
-        if isinstance(entry, dict) and entry.get("participantName")
+        if isinstance(entry, dict)
+        and isinstance(name := entry.get("participantName"), str) and name
     ]
 
 
@@ -72,7 +78,7 @@ def _names_the_bot_could_be(roster) -> list[str]:
 _ROSTER_TIMEOUT_S = 30.0
 
 
-def _wait_for_roster(page, logger, timeout_s: float = _ROSTER_TIMEOUT_S):
+def _wait_for_roster(page: Page, logger: Logger, timeout_s: float = _ROSTER_TIMEOUT_S) -> list[dict[str, Any]]:
     """The roster, once it has a named participant in it.
 
     Returns whatever it has when the window closes, empty included - the caller
@@ -94,7 +100,7 @@ def _wait_for_roster(page, logger, timeout_s: float = _ROSTER_TIMEOUT_S):
         page.wait_for_timeout(_POLL_INTERVAL_MS)
 
 
-def _warn_unless_named_as_a_bot(roster, logger) -> None:
+def _warn_unless_named_as_a_bot(roster: list[dict[str, Any]] | None, logger: Logger) -> None:
     """Warns when nobody in the call is named like a recording bot.
 
     Checked against the whole roster rather than against the bot's own tile,
@@ -229,7 +235,7 @@ class MeetJoinError(RuntimeError):
     """Raised when the bot could not get into the call."""
 
 
-def _start_virtual_display(logger) -> VirtualDisplay | None:
+def _start_virtual_display(logger: Logger) -> VirtualDisplay | None:
     """The screen this recording's browser draws on, when it is to have one.
 
     A window is not something that can be given to a browser that is already
@@ -340,7 +346,7 @@ class MeetMeetingRecorder(MeetingRecorder):
         page: Page,
         meeting_url: str,
         output_dir: str,
-        logger,
+        logger: Logger,
         display: VirtualDisplay | None = None,
     ) -> str:
         """Signs into the configured account after Meet demanded one, and comes
@@ -394,7 +400,7 @@ class MeetMeetingRecorder(MeetingRecorder):
         page: Page,
         meeting_url: str,
         output_dir: str,
-        logger,
+        logger: Logger,
         display: VirtualDisplay | None,
     ) -> CaptchaHandoff | None:
         """What a CAPTCHA gets handed to, or None when there is nobody to hand it to.
@@ -424,7 +430,7 @@ class MeetMeetingRecorder(MeetingRecorder):
         meeting_url: str,
         output_dir: str,
         debug: bool,
-        logger,
+        logger: Logger,
         display: VirtualDisplay | None = None,
     ) -> tuple[str | None, str | None]:
         """Walks the green room and waits to be let in.
@@ -557,7 +563,7 @@ class MeetMeetingRecorder(MeetingRecorder):
             )
         return self_name, account_email
 
-    def _wait_for_admission(self, page: Page, output_dir: str, logger) -> None:
+    def _wait_for_admission(self, page: Page, output_dir: str, logger: Logger) -> None:
         """Blocks until we are in the call, or until Meet says we are not getting in."""
         in_call = page.get_by_role("button", name=re.compile(r"leave call|sair da chamada", re.IGNORECASE))
         deadline = time.time() + _ADMISSION_TIMEOUT_S
@@ -592,7 +598,17 @@ class MeetMeetingRecorder(MeetingRecorder):
             page.wait_for_timeout(_POLL_INTERVAL_MS)
 
     # Is run on a separate process
-    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, vad_observer_js, vad_events: list[dict], vad_meta: dict, audio_sink: str | None):
+    def record_meeting(
+        self,
+        meeting_url: str,
+        q: Queue[RecorderResult],
+        output_dir: str,
+        debug: bool,
+        vad_observer_js: str,
+        vad_events: list[VadEvent],
+        vad_meta: VadMetadata,
+        audio_sink: str | None,
+    ) -> None:
         logger = get_logger("recording.meet", output_dir)
         main_track_path = os.path.join(output_dir, MAIN_TRACK_FILENAME)
         display = _start_virtual_display(logger)
@@ -610,7 +626,7 @@ class MeetMeetingRecorder(MeetingRecorder):
                 on_display = display is not None and display.active
                 logger.info(
                     f"Launching Google Chrome as {WINDOWS_CHROME.name}, "
-                    + (f"on display {display.display}" if on_display else "headless")  # type: ignore[union-attr]
+                    + (f"on display {display.display}" if display is not None and on_display else "headless")
                 )
                 launch = launch_kwargs(WINDOWS_CHROME, headless=not on_display, channel="chrome")
                 browser = p.chromium.launch(
@@ -618,10 +634,10 @@ class MeetMeetingRecorder(MeetingRecorder):
                     # recording's sink and nothing else's, and it is read when
                     # the process connects to Pulse - so it has to be here, at
                     # the launch, and cannot be arranged afterwards.
-                    env=browser_env(
+                    env=dict(browser_env(
                         audio_sink,
-                        display.env() if on_display else None,  # type: ignore[union-attr]
-                    ),
+                        display.env() if display is not None and on_display else None,
+                    )),
                     **{
                         **launch,
                         "args": launch["args"] + [
@@ -669,7 +685,7 @@ class MeetMeetingRecorder(MeetingRecorder):
                     rpc_session = context.new_cdp_session(page)
                     rpc_session.send("Network.enable")
 
-                    def _log_rpc(event):
+                    def _log_rpc(event: dict[str, Any]) -> None:
                         response = event.get("response", {})
                         seen = response.get("url", "")
                         if "/$rpc/" in seen:

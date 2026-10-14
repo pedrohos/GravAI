@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import os
 from functools import lru_cache
 from importlib import resources
+from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import Field, FilePath, SecretStr
@@ -52,8 +55,8 @@ class Settings(BaseSettings):
         alias="JOB_LOG_TAIL_LINES",
     )
 
-    VAD_OBSERVER_TEAMS_JS_PATH: FilePath = str(resources.files("gravai.recording") / "providers" / "teams" / "vad_observer.js")
-    VAD_OBSERVER_MEET_JS_PATH: FilePath = str(resources.files("gravai.recording") / "providers" / "meet" / "vad_observer.js")
+    VAD_OBSERVER_TEAMS_JS_PATH: FilePath = Path(str(resources.files("gravai.recording") / "providers" / "teams" / "vad_observer.js"))
+    VAD_OBSERVER_MEET_JS_PATH: FilePath = Path(str(resources.files("gravai.recording") / "providers" / "meet" / "vad_observer.js"))
 
     GOOGLE_ACCOUNT_EMAIL: str = Field(
         "",
@@ -195,4 +198,5 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings() # type: ignore
+    # BaseSettings loads required values from the environment during validation.
+    return Settings.model_validate({})

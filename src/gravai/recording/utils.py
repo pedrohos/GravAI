@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from urllib.parse import urlparse
+
+from gravai.models.events import VadEvent, VadMetadata
 
 
 def _meeting_origin(meeting_url: str) -> str:
@@ -12,7 +16,7 @@ def _load_text(path: str | Path) -> str:
         return f.read()
 
 
-def _write_vad_timeline(path: str, meta: dict, events: list[dict]) -> None:
+def _write_vad_timeline(path: str, meta: VadMetadata, events: list[VadEvent]) -> None:
     payload = {
         "meta": meta,
         "events": events,

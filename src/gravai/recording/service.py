@@ -30,7 +30,9 @@ def record_meeting(
     logger.info(f"Recording meeting from {meeting_url} with recorder type {recorder_type}")
     logger.info(f"Debug mode is {'enabled' if debug else 'disabled'}")
 
-    recorder = get_provider(recorder_type).recorder()  # type: ignore[misc]
+    recorder_class = get_provider(recorder_type).recorder
+    assert recorder_class is not None, "Provider must have a recorder"
+    recorder = recorder_class()
     return recorder.record_meeting_with_audio_capture(
         meeting_url,
         output_dir=output_dir,

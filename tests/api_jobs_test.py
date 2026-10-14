@@ -344,3 +344,42 @@ def test_delete_content_missing_or_active_recording(client, tmp_path, route):
         )
     )
     assert client.delete(f"/recordings/busy/{route}").status_code == 409
+
+
+@pytest.mark.parametrize(
+    "suffix,mime", [(".wav", "audio/wav"), (".flac", "audio/flac")]
+)
+@pytest.mark.parametrize("speech_only", [False, True])
+def test_participant_audio_serves_stored_format(
+    client, tmp_path, suffix, mime, speech_only
+):
+    track = tmp_path / f"participant{suffix}"
+    speech = tmp_path / f"participant_speech{suffix}"
+    track.write_bytes(b"aligned audio")
+    speech.write_bytes(b"speech audio")
+    store.upsert_recording(
+        RecordingUpsertDTO(
+            recording_id="formats", session_dir=str(tmp_path), status="complete"
+        )
+    )
+    store.replace_participants(
+        "formats",
+        [
+            ParticipantDTO.model_validate(
+                {
+                    "participant_id": "participant",
+                    "participant_name": "Participant",
+                    "track_path": str(track),
+                    "speech_track_path": str(speech),
+                }
+            )
+        ],
+    )
+    response = client.get(
+        "/recordings/formats/participants/participant/audio",
+        params={"speech_only": speech_only},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == mime
+    assert f'filename="participant{suffix}"' in response.headers["content-disposition"]
+    assert response.content == (b"speech audio" if speech_only else b"aligned audio")

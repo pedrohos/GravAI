@@ -180,7 +180,7 @@ def test_session_snapshot_round_trips_in_job_result(database):
             "participant": ParticipantData(
                 participant_id="participant",
                 participant_name="Participant",
-                track=Track(wav_file_path="/tmp/participant.flac"),
+                track=Track(audio_file_path="/tmp/participant.flac"),
             )
         },
     )

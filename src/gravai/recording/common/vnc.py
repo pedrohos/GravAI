@@ -47,8 +47,12 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
+from logging import Logger
 from pathlib import Path
 from secrets import token_urlsafe
+from typing import Any
+
+from playwright.sync_api import Page
 
 # The record a waiting challenge leaves in the session directory, so that
 # something other than a log tail can find it - the API reads these to answer
@@ -110,7 +114,7 @@ def _die_with_parent() -> list[str]:
     return ["setpriv", "--pdeathsig", "TERM", "--"]
 
 
-def _stop(process: subprocess.Popen | None, what: str, logger=None) -> None:
+def _stop(process: subprocess.Popen[bytes] | None, what: str, logger: Logger | None=None) -> None:
     """Ends a child, and does not return while it is still running."""
     if process is None or process.poll() is not None:
         return
@@ -148,11 +152,11 @@ class VirtualDisplay:
     reason to fail a meeting that was very likely never going to see a CAPTCHA.
     """
 
-    def __init__(self, width: int, height: int, logger=None):
+    def __init__(self, width: int, height: int, logger: Logger | None=None) -> None:
         self._width = width
         self._height = height
         self._logger = logger
-        self._process: subprocess.Popen | None = None
+        self._process: subprocess.Popen[bytes] | None = None
         self._display: str | None = None
 
     @property
@@ -262,7 +266,7 @@ class VirtualDisplay:
         self.start()
         return self
 
-    def __exit__(self, *_exc) -> None:
+    def __exit__(self, *_exc: object) -> None:
         self.stop()
 
     def _log(self, level: str, message: str) -> None:
@@ -322,15 +326,15 @@ class VncServer:
         port: int,
         password: str,
         output_dir: str,
-        logger=None,
-    ):
+        logger: Logger | None=None,
+    ) -> None:
         self._display = display
         self._host = host
         self._port = port
         self._password = password
         self._output_dir = output_dir
         self._logger = logger
-        self._process: subprocess.Popen | None = None
+        self._process: subprocess.Popen[bytes] | None = None
         self._passwd_file: Path | None = None
         self._endpoint: VncEndpoint | None = None
 
@@ -398,7 +402,7 @@ class VncServer:
             + (f": {last_error}" if last_error else f". Check {self._log_path()} for what it said.")
         )
 
-    def _launch(self, port: int) -> subprocess.Popen:
+    def _launch(self, port: int) -> subprocess.Popen[bytes]:
         return subprocess.Popen(
             _die_with_parent()
             + [
@@ -524,10 +528,10 @@ class CaptchaHandoff:
         port: int,
         password: str,
         timeout_s: float,
-        logger,
+        logger: Logger,
         meeting_url: str | None = None,
         screenshot: Callable[[str], str | None] | None = None,
-    ):
+    ) -> None:
         self._display = display
         self._output_dir = output_dir
         self._timeout_s = timeout_s
@@ -543,7 +547,7 @@ class CaptchaHandoff:
             logger=logger,
         )
 
-    def solve(self, page) -> bool:
+    def solve(self, page: Page) -> bool:
         """Shows the screen to whoever is out there, and waits for the answer."""
         # Imported here rather than at the top because the API imports this
         # module for pending_challenges() alone, and answering 'is anything
@@ -669,7 +673,7 @@ class CaptchaHandoff:
             pass
 
 
-def pending_challenges(save_dir: str) -> list[dict]:
+def pending_challenges(save_dir: str) -> list[dict[str, Any]]:
     """Every CAPTCHA currently waiting for somebody, across all recordings.
 
     Read off the session directories rather than held in memory: the recording

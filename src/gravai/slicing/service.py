@@ -1,16 +1,19 @@
 
+from __future__ import annotations
+
 from gravai.config.logging_config import get_logger
 from gravai.config.registry import get_provider
-from gravai.models.common import RecordingType, Session
+from gravai.models.common import ParticipantData, RecordingType, Session
 from gravai.slicing.slice import Slicer
 
 
-def slice_track(recorder_type: RecordingType, tracks_output_dir: str, group_slices_by_name: bool = True) -> tuple[str, Session]:
+def slice_track(recorder_type: RecordingType, tracks_output_dir: str, group_slices_by_name: bool = True) -> tuple[str, Session[ParticipantData]]:
     logger = get_logger("slicing", tracks_output_dir)
     logger.info(f"Slicing started for tracks in {tracks_output_dir}")
 
     slice_session = get_provider(recorder_type).slice_session
-    session = slice_session(tracks_output_dir, group_slices_by_name)  # type: ignore[misc]
+    assert slice_session is not None, "Provider must have a slicer"
+    session = slice_session(tracks_output_dir, group_slices_by_name)
 
     metadata_output_path = f"{tracks_output_dir}/session_metadata.json"
     Slicer.save_session_data(session, metadata_output_path)

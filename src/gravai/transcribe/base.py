@@ -1,18 +1,26 @@
+from __future__ import annotations
+
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from glob import glob
+from logging import Logger
 from pathlib import Path
+from typing import Any
 
 import requests
 
 from gravai.config.logging_config import get_logger
 from gravai.models.common import (
+    ParticipantDataT,
     ParticipantDataTransc,
     Session,
+    SpeechSegment,
     TranscriptedSession,
     Transcription,
 )
+from gravai.models.events import WhisperResponse
 from gravai.transcribe.errors import WhisperError
 from gravai.transcribe.formatter import format_and_save_single_segment
 
@@ -64,7 +72,7 @@ def is_silent(audio_file: str) -> bool:
     return peak <= _SILENCE_PEAK_DBFS
 
 
-def to_meeting_time(offset: float, segments: list, at_segment_start: bool = False) -> float:
+def to_meeting_time(offset: float, segments: Sequence[SpeechSegment], at_segment_start: bool = False) -> float:
     """Maps an offset inside the speech track back onto the meeting timeline.
 
     The speech track is the participant's segments concatenated, so a second at
@@ -87,14 +95,14 @@ def to_meeting_time(offset: float, segments: list, at_segment_start: bool = Fals
         consumed += duration
     return segments[-1].end
 
-def _write_transcription_files(wav_file_path: str, text: str, segments: list) -> Transcription:
+def _write_transcription_files(audio_file_path: str, text: str, segments: list[dict[str, Any]]) -> Transcription:
     """Writes the two files a transcription is made of, next to its audio.
 
     Every transcript in a session - one per participant, plus the meeting as a
-    whole - is named after the wav it came from, so the pair can always be found
+    whole - is named after the audio file it came from, so the pair can always be found
     from the track and never has to be guessed at.
     """
-    track_path = Path(wav_file_path)
+    track_path = Path(audio_file_path)
     transcription_text_output_path = str(
         track_path.with_name(f"{track_path.stem}_transcription_text.txt")
     )
@@ -116,9 +124,9 @@ def _transcribe_or_skip_silence(
     whisper_host: str,
     whisper_port: int,
     language: str | None,
-    logger,
+    logger: Logger,
     label: str,
-) -> dict:
+) -> WhisperResponse:
     """Whisper's answer for one file, or an empty one when it is certainly silent.
 
     The gate is here rather than at the call sites because it protects every one
@@ -136,7 +144,7 @@ def _transcribe_or_skip_silence(
     return transcribe(source_path, whisper_host, int(whisper_port), language=language)
 
 
-def _resolve_main_track(session: Session) -> str | None:
+def _resolve_main_track(session: Session[ParticipantDataT]) -> str | None:
     """The mixed track of a session, from the session or from its directory.
 
     Sessions sliced before main_track_path existed do not carry one, and their
@@ -151,39 +159,42 @@ def _resolve_main_track(session: Session) -> str | None:
     session_dir = _session_dir(session)
     if not session_dir:
         return None
-    candidates = sorted(glob(os.path.join(session_dir, "track_mainAudio*.wav")))
+    candidates = sorted(
+        path for suffix in ("flac", "wav")
+        for path in glob(os.path.join(session_dir, f"track_mainAudio*.{suffix}"))
+    )
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _session_dir(session: Session) -> str | None:
+def _session_dir(session: Session[ParticipantDataT]) -> str | None:
     """Directory a session's files live in, from whichever path it carries."""
     if session.main_track_path:
         return os.path.dirname(session.main_track_path)
     if session.tracks:
-        return os.path.dirname(next(iter(session.tracks.values())).track.wav_file_path)
+        return os.path.dirname(next(iter(session.tracks.values())).track.audio_file_path)
     return None
 
 
 def transcribe_meeting_tracks(
-        session: Session,
+        session: Session[ParticipantDataT],
         whisper_host: str,
         whisper_port: int,
         language: str | None = None,
-    ):
+    ) -> TranscriptedSession:
     log_dir = _session_dir(session)
     logger = get_logger("transcribe", log_dir)
 
     logger.info(f"Transcription started for session {session.session_id} ({len(session.tracks)} track(s))")
     tracks = {}
     for participant_id, participant_data in session.tracks.items():
-        wav_file_path = participant_data.track.wav_file_path
-        os.makedirs(os.path.dirname(wav_file_path), exist_ok=True)
+        audio_file_path = participant_data.track.audio_file_path
+        os.makedirs(os.path.dirname(audio_file_path), exist_ok=True)
 
         # The speech-only track when slicing produced one: whisper fills silence
         # with sentences nobody said, at one per 30-second window.
-        speech_path = participant_data.track.speech_wav_file_path
+        speech_path = participant_data.track.speech_audio_file_path
         segments_map = participant_data.track.speech_segments
-        source_path = speech_path if speech_path and os.path.exists(speech_path) else wav_file_path
+        source_path = speech_path if speech_path and os.path.exists(speech_path) else audio_file_path
 
         transcription = _transcribe_or_skip_silence(
             source_path,
@@ -214,7 +225,7 @@ def transcribe_meeting_tracks(
             participant_name=participant_data.participant_name,
             track=participant_data.track,
             transcription=_write_transcription_files(
-                wav_file_path, transcription_text, transcription_segments
+                audio_file_path, transcription_text, transcription_segments
             ),
         )
 
@@ -234,11 +245,11 @@ def transcribe_meeting_tracks(
 
 
 def _transcribe_meeting(
-    session: Session,
+    session: Session[ParticipantDataT],
     whisper_host: str,
     whisper_port: int,
     language: str | None,
-    logger,
+    logger: Logger,
 ) -> Transcription | None:
     """Transcribes the meeting from its mixed track, in one pass.
 
@@ -284,7 +295,7 @@ def transcribe(
     whisper_server_port: int,
     timeout: tuple[float, float] = _WHISPER_TIMEOUT_S,
     language: str | None = None,
-) -> dict:
+) -> WhisperResponse:
     # Without a timeout a stalled whisper server pins this thread forever, and
     # since the routes run in the threadpool, enough of those stop the API from
     # serving anything at all.
@@ -297,11 +308,12 @@ def transcribe(
     # does when the field is absent - so neither is sent.
     if language and language.casefold() != "auto":
         data["language"] = language
+    media_type = "audio/flac" if Path(audio_file).suffix.lower() == ".flac" else "audio/wav"
     with open(audio_file, "rb") as audio:
         response = requests.post(
             url,
             files={
-                "file": (os.path.basename(audio_file), audio, "audio/wav")
+                "file": (os.path.basename(audio_file), audio, media_type)
             },
             data=data,
             timeout=timeout,

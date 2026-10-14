@@ -92,7 +92,7 @@ def _render(value: Any) -> str:
     return "" if value is None else str(value)
 
 
-def read_config() -> dict:
+def read_config() -> dict[str, Any]:
     """The editable settings as plain data.
 
     Plain dicts rather than the API's response models, so that the configuration
@@ -120,7 +120,7 @@ def read_config() -> dict:
     return {"env_file": env_file_path(), "fields": fields}
 
 
-def write_config(values: dict[str, str]) -> dict:
+def write_config(values: dict[str, str]) -> dict[str, Any]:
     """Applies changed settings to the process and to the .env file.
 
     Both, and in that order: the environment is what the running service and

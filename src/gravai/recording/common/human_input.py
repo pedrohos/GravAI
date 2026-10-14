@@ -14,14 +14,17 @@ from __future__ import annotations
 
 import random
 import re
+from typing import Literal
+
+from playwright.sync_api import Locator, Page
 
 
-def pause(page, low: float, high: float) -> None:
+def pause(page: Page, low: float, high: float) -> None:
     """A wait of no particular length, which is what a person's waits are."""
     page.wait_for_timeout(random.uniform(low, high) * 1000)
 
 
-def type_like_a_person(page, text: str) -> None:
+def type_like_a_person(page: Page, text: str) -> None:
     """Types into whatever has focus, one key at a time, at a rate that wanders.
 
     `fill()` sets the value in one assignment and fires a single input event: a
@@ -40,7 +43,7 @@ def type_like_a_person(page, text: str) -> None:
         page.wait_for_timeout(delay * 1000)
 
 
-def click_if_present(page, name: str, timeout: float = 3000, roles=("button", "link")) -> bool:
+def click_if_present(page: Page, name: str, timeout: float = 3000, roles: tuple[Literal["button", "link"], ...]=("button", "link")) -> bool:
     """Best-effort click on a control that may not be on this screen at all.
 
     Through the pointer like everything else here: a click that arrives with no
@@ -63,7 +66,7 @@ def click_if_present(page, name: str, timeout: float = 3000, roles=("button", "l
     return False
 
 
-def move_and_click(page, locator, timeout: float | None = None) -> None:
+def move_and_click(page: Page, locator: Locator, timeout: float | None = None) -> None:
     """Sends the pointer to the control along a path, then clicks it.
 
     The press is `page.mouse.click` at the point the pointer already reached, not
@@ -76,11 +79,10 @@ def move_and_click(page, locator, timeout: float | None = None) -> None:
     may not be there fails as fast as it asked to rather than blocking on the
     page default.
     """
-    limits = {} if timeout is None else {"timeout": timeout}
-    box = locator.bounding_box(**limits)
+    box = locator.bounding_box(timeout=timeout)
     if not box:
         # Nothing to aim at - not visible, or gone between the two calls.
-        locator.click(**limits)
+        locator.click(timeout=timeout)
         return
 
     # Somewhere inside the control rather than dead centre: a person aims at a

@@ -76,17 +76,18 @@ def _play_tone_into(sink_name: str) -> None:
     )
 
 
-def _peak_dbfs(wav_path: str) -> float:
-    with wave.open(wav_path, "rb") as wf:
-        samples = array("h")
-        samples.frombytes(wf.readframes(wf.getnframes()))
-    peak = max((abs(sample) for sample in samples), default=0)
-    return -120.0 if peak == 0 else 20.0 * math.log10(peak / 32768.0)
+def _peak_dbfs(audio_path: str) -> float:
+    from gravai.transcribe.base import peak_dbfs
+    return peak_dbfs(audio_path)
 
 
-def _wav_seconds(wav_path: str) -> float:
-    with wave.open(wav_path, "rb") as wf:
-        return wf.getnframes() / wf.getframerate()
+def _audio_seconds(audio_path: str) -> float:
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+        check=True, capture_output=True, text=True,
+    )
+    return float(probe.stdout)
 
 
 def test_the_capture_leaves_what_slicing_goes_looking_for(tmp_path):
@@ -94,16 +95,16 @@ def test_the_capture_leaves_what_slicing_goes_looking_for(tmp_path):
     with SessionAudioCapture("session-contract", str(tmp_path)) as capture:
         _play_tone_into(capture.sink_name)
 
-    tracks = glob(str(tmp_path / "track_mainAudio*.wav"))
+    tracks = glob(str(tmp_path / "track_mainAudio*.flac"))
     assert len(tracks) == 1, "slicing rejects a directory with any other number"
-    assert Path(tracks[0]).name == "track_mainAudio.wav"
+    assert Path(tracks[0]).name == "track_mainAudio.flac"
 
     sidecar = json.loads((tmp_path / "session_sidecar.json").read_text())
-    # `track_mainAudio.wav` -> `mainAudio`, the key slicing derives and looks up.
+    # `track_mainAudio.flac` -> `mainAudio`, the key slicing derives and looks up.
     key = Path(tracks[0]).stem.removeprefix("track_")
     assert key == MAIN_TRACK_ID
     track = sidecar["tracks"][key]
-    assert track["wav_file"] == "track_mainAudio.wav"
+    assert track["audio_file"] == "track_mainAudio.flac"
     assert track["sample_rate"] == 48000 and track["channels"] == 1
 
     started = datetime.fromisoformat(track["started_at"])
@@ -112,7 +113,7 @@ def test_the_capture_leaves_what_slicing_goes_looking_for(tmp_path):
     # slicing turns event timestamps into offsets into this wav, so a sidecar
     # claiming more time than the file holds sends every cut past the end of it.
     claimed = (ended - started).total_seconds()
-    assert claimed == pytest.approx(_wav_seconds(tracks[0]), abs=0.05)
+    assert claimed == pytest.approx(_audio_seconds(tracks[0]), abs=0.05)
 
 
 def test_slicing_reads_back_what_the_capture_wrote(tmp_path):
@@ -137,17 +138,17 @@ def test_slicing_reads_back_what_the_capture_wrote(tmp_path):
                  "page_start_ms": spoke_at, "page_end_ms": spoke_at + 2000},
         "events": [
             {"type": "voice-level", "timestamp": spoke_at,
-             "data": {"id": "p1", "participantName": "pedrohos",
+             "data": {"id": "p1", "participantName": "Participant",
                       "classCount": 1, "timestamp": spoke_at}},
             {"type": "voice-level", "timestamp": spoke_at + 2000,
-             "data": {"id": "p1", "participantName": "pedrohos",
+             "data": {"id": "p1", "participantName": "Participant",
                       "classCount": 0, "timestamp": spoke_at + 2000}},
         ],
     }))
 
     session = _extract_session_dto(str(tmp_path))
 
-    assert session.main_track_name == "track_mainAudio.wav"
+    assert session.main_track_name == "track_mainAudio.flac"
     assert session.session_id == "session-handover"
     assert session.start_time == started
     # The speaking event has to land inside the audio, or every cut made from it
@@ -161,7 +162,7 @@ def test_a_recording_captures_what_its_own_browser_played(tmp_path):
     with SessionAudioCapture("session-audible", str(tmp_path)) as capture:
         _play_tone_into(capture.sink_name)
 
-    assert _peak_dbfs(str(tmp_path / "track_mainAudio.wav")) > _AUDIBLE_DBFS
+    assert _peak_dbfs(str(tmp_path / "track_mainAudio.flac")) > _AUDIBLE_DBFS
 
 
 def test_two_recordings_at_once_do_not_hear_each_other(tmp_path):
@@ -174,8 +175,8 @@ def test_two_recordings_at_once_do_not_hear_each_other(tmp_path):
         assert first.sink_name != second.sink_name
         _play_tone_into(first.sink_name)
 
-    assert _peak_dbfs(str(first_dir / "track_mainAudio.wav")) > _AUDIBLE_DBFS
-    assert _peak_dbfs(str(second_dir / "track_mainAudio.wav")) < -80.0
+    assert _peak_dbfs(str(first_dir / "track_mainAudio.flac")) > _AUDIBLE_DBFS
+    assert _peak_dbfs(str(second_dir / "track_mainAudio.flac")) < -80.0
 
 
 def test_the_sink_goes_away_with_the_recording(tmp_path):
@@ -203,7 +204,7 @@ def test_a_capture_that_never_starts_leaves_no_sink_behind(tmp_path, monkeypatch
     assert capture.sink_name not in _sinks()
 
 
-def _write_wav(path, sections: list[tuple[float, int]]) -> str:
+def _write_pcm_audio(path, sections: list[tuple[float, int]]) -> str:
     """A wav of `(seconds, amplitude)` sections, written as ffmpeg writes one."""
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(1)
@@ -217,7 +218,7 @@ def _write_wav(path, sections: list[tuple[float, int]]) -> str:
 
 def test_a_call_still_being_heard_reads_as_audible(tmp_path):
     """What keeps a recording in a meeting whose speaking indicator went quiet."""
-    talking = _write_wav(tmp_path / "talking.wav", [(5.0, 8000)])
+    talking = _write_pcm_audio(tmp_path / "talking.wav", [(5.0, 8000)])
 
     assert capture_is_audible(talking, 30.0) is True
 
@@ -229,7 +230,7 @@ def test_only_the_tail_of_the_capture_is_asked(tmp_path):
     whole call: an hour of speech followed by everybody leaving would otherwise
     keep answering 'somebody is still here' for as long as the file is open.
     """
-    was_loud = _write_wav(tmp_path / "was_loud.wav", [(5.0, 8000), (40.0, 0)])
+    was_loud = _write_pcm_audio(tmp_path / "was_loud.wav", [(5.0, 8000), (40.0, 0)])
 
     assert capture_is_audible(was_loud, 30.0) is False
     assert capture_is_audible(was_loud, 60.0) is True
@@ -238,3 +239,12 @@ def test_only_the_tail_of_the_capture_is_asked(tmp_path):
 def test_a_capture_that_cannot_be_measured_is_not_evidence_of_speech(tmp_path):
     """No file yet, or no capture at all, leaves the page's signal to decide."""
     assert capture_is_audible(str(tmp_path / "missing.wav"), 30.0) is False
+
+
+def test_live_flac_capture_is_audible_before_header_is_finalized(tmp_path):
+    with SessionAudioCapture("session-live-flac", str(tmp_path)) as capture:
+        _play_tone_into(capture.sink_name)
+        assert capture.is_running
+        assert capture_is_audible(capture.audio_path)
+        assert capture._frames_on_disk() > SAMPLE_RATE
+    assert not list(tmp_path.glob("*.wav"))

@@ -41,8 +41,8 @@ def _sliced_session(tmp_path) -> Session:
                 participant_id="Ana",
                 participant_name="Ana",
                 track=Track(
-                    wav_file_path=str(aligned),
-                    speech_wav_file_path=str(speech),
+                    audio_file_path=str(aligned),
+                    speech_audio_file_path=str(speech),
                     speech_segments=[SpeechSegment(start=1.0, end=4.5)],
                 ),
             )

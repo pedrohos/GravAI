@@ -16,6 +16,9 @@ this API has no authentication, so an origin listed there can start recordings,
 read every transcript and change the settings.
 """
 
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -30,7 +33,7 @@ logger = get_logger("api")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     store.init_db()
     # Jobs run in their own process group and outlive the API deliberately, so a
     # restart leaves the ones that are still going alone. The ones whose process

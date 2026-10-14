@@ -15,7 +15,7 @@ and ffmpeg records that sink's monitor for as long as the meeting lasts:
 
     with SessionAudioCapture(session_id, tracks_dir) as capture:
         ...  # launch the browser with capture.browser_env() and run the meeting
-    # leaving the block stops ffmpeg and finalizes the wav: the track is on disk
+    # leaving the block stops ffmpeg and finalizes the FLAC: the track is on disk
 
 `PULSE_SINK` is read by the PulseAudio client library when a process connects, so
 it binds that browser and everything it spawns to that sink and nothing else
@@ -23,10 +23,12 @@ lands there. That is what keeps two recordings running at once from recording
 each other, and it is the property the audio server had to be rewritten
 per-session to get.
 
-The handover to slicing is unchanged: one `track_mainAudio*.wav` and a
+The handover to slicing is unchanged: one `track_mainAudio*.flac` and a
 `session_sidecar.json` describing it, whose `started_at` shares a wall clock with
 the timestamps in `vad_timeline.json`.
 """
+
+from __future__ import annotations
 
 import json
 import math
@@ -37,19 +39,23 @@ import signal
 import subprocess
 import tempfile
 import time
-import wave
 from array import array
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from logging import Logger
+from types import TracebackType
+from typing import Any
 
 from gravai.config.logging_config import get_logger
+from gravai.models.audio import AudioTrackMetadata, SessionAudioMetadata
 
 SIDECAR_FILENAME = "session_sidecar.json"
 
-#: Slicing requires exactly one `track_mainAudio*.wav` in a session directory and
+#: Slicing requires exactly one `track_mainAudio*.flac` in a session directory and
 #: derives its sidecar key from the filename, so these two are the contract and
 #: not a naming choice. See `_extract_session_dto` in slicing/slice.py.
 MAIN_TRACK_ID = "mainAudio"
-MAIN_TRACK_FILENAME = f"track_{MAIN_TRACK_ID}.wav"
+MAIN_TRACK_FILENAME = f"track_{MAIN_TRACK_ID}.flac"
 
 #: What ffmpeg is told to write, and therefore what the sidecar announces.
 SAMPLE_RATE = 48000
@@ -98,11 +104,11 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess:
+def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, capture_output=True, text=True)
 
 
-def _atomic_write_json(path: str, payload: dict) -> None:
+def _atomic_write_json(path: str, payload: dict[str, Any]) -> None:
     # The sidecar is rewritten when the track starts and again when it ends,
     # while the slicer may already be reading it. Write and rename, so a reader
     # never sees a truncated one.
@@ -129,7 +135,7 @@ def _require_binaries() -> None:
         )
 
 
-def ensure_pulse_running(logger=None) -> None:
+def ensure_pulse_running(logger: Logger | None=None) -> None:
     """Brings the PulseAudio daemon up if it is not already.
 
     Ordering is the one hazard this design has: a browser that launches while
@@ -206,16 +212,46 @@ def sink_applications(sink_name: str) -> list[str]:
     return applications
 
 
-def capture_peak_dbfs(wav_path: str, window_s: float = _PEAK_WINDOW_S) -> float | None:
+def capture_peak_dbfs(audio_path: str, window_s: float = _PEAK_WINDOW_S) -> float | None:
     """Loudest sample in the last `window_s` of a capture, in dBFS.
 
     Reads the tail of the file rather than measuring the whole of it, so this can
     be asked repeatedly during a meeting that is hours long. None means there is
     nothing recorded yet.
     """
+    if audio_path.lower().endswith(".flac"):
+        try:
+            # Use finalized duration or FFmpeg's live progress to locate the tail.
+            with open(audio_path, "rb") as audio:
+                header = audio.read(42)
+            if header[:4] != b"fLaC" or len(header) < 42:
+                return None
+            total_frames = int.from_bytes(header[18:26], "big") & ((1 << 36) - 1)
+            duration = total_frames / SAMPLE_RATE
+            if not total_frames:
+                progress_path = os.path.join(os.path.dirname(audio_path), "audio_capture.progress")
+                with open(progress_path) as progress:
+                    values = [int(line.split("=", 1)[1]) for line in progress
+                              if line.startswith("out_time_us=") and line.strip() != "out_time_us=N/A"]
+                duration = values[-1] / 1_000_000 if values else 0
+            decoded = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                 "-ss", str(max(0, duration - window_s)), "-i", audio_path,
+                 "-t", str(window_s), "-ac", "1", "-c:a", "pcm_s16le", "-f", "s16le", "pipe:1"],
+                capture_output=True, timeout=15,
+            )
+            if not decoded.stdout:
+                return None
+            samples = array("h")
+            samples.frombytes(decoded.stdout[:len(decoded.stdout) // 2 * 2])
+            peak = max(abs(sample) for sample in samples)
+            return _SILENCE_FLOOR_DBFS if peak == 0 else round(20 * math.log10(peak / 32768), 1)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return None
+
     frame_bytes = _SAMPLE_WIDTH_BYTES * CHANNELS
     try:
-        size = os.path.getsize(wav_path)
+        size = os.path.getsize(audio_path)
     except OSError:
         return None
     available = size - _WAV_HEADER_BYTES
@@ -227,7 +263,7 @@ def capture_peak_dbfs(wav_path: str, window_s: float = _PEAK_WINDOW_S) -> float 
     # Whole frames only, or the samples come back interleaved by half a frame.
     read_bytes -= read_bytes % frame_bytes
     try:
-        with open(wav_path, "rb") as f:
+        with open(audio_path, "rb") as f:
             f.seek(size - read_bytes)
             tail = f.read(read_bytes)
     except OSError:
@@ -245,7 +281,7 @@ def capture_peak_dbfs(wav_path: str, window_s: float = _PEAK_WINDOW_S) -> float 
     return round(20.0 * math.log10(peak / 32768.0), 1)
 
 
-def capture_is_audible(wav_path: str, window_s: float = _PEAK_WINDOW_S) -> bool:
+def capture_is_audible(audio_path: str, window_s: float = _PEAK_WINDOW_S) -> bool:
     """Whether the capture has carried speech-level audio in its last `window_s`.
 
     This is the liveness signal a call cannot hide from the recorder. The page's
@@ -259,11 +295,11 @@ def capture_is_audible(wav_path: str, window_s: float = _PEAK_WINDOW_S) -> bool:
     answers False: it is no evidence of anybody speaking, and leaves the caller
     with whatever the page had to say.
     """
-    peak = capture_peak_dbfs(wav_path, window_s)
+    peak = capture_peak_dbfs(audio_path, window_s)
     return peak is not None and peak > _AUDIBLE_PEAK_DBFS
 
 
-def browser_env(sink_name: str | None, base=None) -> dict[str, str]:
+def browser_env(sink_name: str | None, base: Mapping[str, str] | None=None) -> dict[str, str]:
     """`base` with the browser pointed at one recording's sink.
 
     Chrome is told where to play through the environment and not a flag, so this
@@ -278,7 +314,7 @@ def browser_env(sink_name: str | None, base=None) -> dict[str, str]:
     return environment
 
 
-def log_capture_status(sink_name: str, wav_path: str, logger, when: str) -> bool:
+def log_capture_status(sink_name: str, audio_path: str, logger: Logger, when: str) -> bool:
     """Logs what is playing into this recording's sink and what has been heard.
 
     Answers whether audio is arriving, so a caller can stop asking once it is.
@@ -287,7 +323,7 @@ def log_capture_status(sink_name: str, wav_path: str, logger, when: str) -> bool
     from a quiet room afterwards is to have asked at the time.
     """
     applications = sink_applications(sink_name)
-    peak = capture_peak_dbfs(wav_path)
+    peak = capture_peak_dbfs(audio_path)
     logger.info(
         f"[audio-capture] {when}: sink={sink_name} "
         f"playing={applications or 'nothing'} "
@@ -304,16 +340,17 @@ def log_capture_status(sink_name: str, wav_path: str, logger, when: str) -> bool
 class SessionAudioCapture:
     """The null sink and the ffmpeg process behind a single recording."""
 
-    def __init__(self, session_id: str, output_dir: str):
+    def __init__(self, session_id: str, output_dir: str) -> None:
         self.session_id = session_id
         self.output_dir = output_dir
         self.sink_name = sink_name_for(session_id)
-        self.wav_path = os.path.join(output_dir, MAIN_TRACK_FILENAME)
+        self.audio_path = os.path.join(output_dir, MAIN_TRACK_FILENAME)
+        self.progress_path = os.path.join(output_dir, "audio_capture.progress")
         self.sidecar_path = os.path.join(output_dir, SIDECAR_FILENAME)
 
         self._logger = get_logger("recording.audio_capture", output_dir)
         self._module_id: str | None = None
-        self._ffmpeg: subprocess.Popen | None = None
+        self._ffmpeg: subprocess.Popen[bytes] | None = None
         self._capture_log = None
         self._session_start = _utc_now()
         self._started_at: datetime | None = None
@@ -323,7 +360,7 @@ class SessionAudioCapture:
     def is_running(self) -> bool:
         return self._ffmpeg is not None and self._ffmpeg.poll() is None
 
-    def browser_env(self, base=None) -> dict[str, str]:
+    def browser_env(self, base: Mapping[str, str] | None=None) -> dict[str, str]:
         """`base` with the browser pointed at this recording's sink."""
         return browser_env(self.sink_name, base)
 
@@ -359,7 +396,7 @@ class SessionAudioCapture:
 
         frames = self._frames_recorded()
         if self._started_at is not None:
-            # From the file rather than from the clock: a wav whose duration and
+            # From the file rather than from the clock: a track whose duration and
             # whose sidecar disagree makes slicing look for speech at offsets the
             # audio never reaches, and the file is the thing that gets cut.
             self._ended_at = self._started_at + timedelta(seconds=frames / SAMPLE_RATE)
@@ -397,19 +434,17 @@ class SessionAudioCapture:
             )
         self._module_id = None
 
-    def _start_ffmpeg(self) -> subprocess.Popen:
+    def _start_ffmpeg(self) -> subprocess.Popen[bytes]:
         self._capture_log = open(os.path.join(self.output_dir, CAPTURE_LOG_FILENAME), "wb")
         return subprocess.Popen(
             [
                 "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
                 "-f", "pulse", "-i", f"{self.sink_name}.monitor",
-                "-ac", str(CHANNELS), "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le",
-                # Without this the wav trails the audio by a 32KB buffer - a
-                # third of a second at this rate - and the first samples this
-                # waits for below would land that late, putting `started_at`
-                # after the audio it is meant to stamp.
+                "-ac", str(CHANNELS), "-ar", str(SAMPLE_RATE), "-c:a", "flac",
+                "-progress", self.progress_path, "-stats_period", "0.1",
+                # Flush encoded packets promptly for live health checks.
                 "-flush_packets", "1",
-                self.wav_path,
+                self.audio_path,
             ],
             stdin=subprocess.PIPE,
             stdout=self._capture_log,
@@ -419,7 +454,7 @@ class SessionAudioCapture:
     def _stop_ffmpeg(self) -> None:
         proc = self._ffmpeg
         if proc is not None and proc.poll() is None:
-            # 'q' is ffmpeg's own stop: it writes the wav header's real length
+            # 'q' is ffmpeg's own stop: it finalizes the FLAC sample count
             # before exiting. Killing it instead leaves a header claiming zero
             # samples over a file full of them.
             try:
@@ -439,7 +474,7 @@ class SessionAudioCapture:
                 try:
                     proc.wait(timeout=_FFMPEG_INTERRUPT_TIMEOUT_S)
                 except subprocess.TimeoutExpired:
-                    self._logger.error("ffmpeg ignored the interrupt; killing it. The wav "
+                    self._logger.error("ffmpeg ignored the interrupt; killing it. The FLAC "
                                        "header may understate how much audio is in the file.")
                     proc.kill()
                     proc.wait()
@@ -479,26 +514,28 @@ class SessionAudioCapture:
             time.sleep(_POLL_INTERVAL_S)
 
     def _frames_on_disk(self) -> int:
-        """Frames in the file as it grows, counted from its size.
-
-        The header ffmpeg wrote at the start claims no samples at all until it
-        rewrites it on exit, so `wave` cannot answer this while recording.
-        """
+        """Encoded frames reported by FFmpeg; compressed size is not duration."""
         try:
-            size = os.path.getsize(self.wav_path)
-        except OSError:
+            with open(self.progress_path) as progress:
+                values = [int(line.split("=", 1)[1]) for line in progress
+                          if line.startswith("out_time_us=") and line.strip() != "out_time_us=N/A"]
+        except (OSError, ValueError):
             return 0
-        return max(0, size - _WAV_HEADER_BYTES) // (_SAMPLE_WIDTH_BYTES * CHANNELS)
+        return max(0, values[-1] * SAMPLE_RATE // 1_000_000) if values else 0
 
     def _frames_recorded(self) -> int:
+        # Finalized FLAC's STREAMINFO contains the exact sample count, unlike
+        # a growing file whose header is only updated when the encoder exits.
         try:
-            with wave.open(self.wav_path, "rb") as wf:
-                frames = wf.getnframes()
-        except (OSError, wave.Error):
-            return self._frames_on_disk()
-        # A killed ffmpeg leaves the placeholder header behind; the file itself
-        # is still the better answer.
-        return frames or self._frames_on_disk()
+            with open(self.audio_path, "rb") as audio:
+                header = audio.read(42)
+            if header[:4] == b"fLaC" and len(header) == 42:
+                frames = int.from_bytes(header[18:26], "big") & ((1 << 36) - 1)
+                if frames:
+                    return frames
+        except OSError:
+            pass
+        return self._frames_on_disk()
 
     def _capture_tail(self, lines: int = 5) -> str:
         try:
@@ -508,29 +545,26 @@ class SessionAudioCapture:
             return "(no capture log)"
 
     def _write_sidecar(self) -> None:
-        track: dict = {}
+        tracks = {}
         if self._started_at is not None:
-            track = {
-                MAIN_TRACK_ID: {
-                    "started_at": self._started_at.isoformat(),
-                    "sample_rate": SAMPLE_RATE,
-                    "channels": CHANNELS,
-                    "wav_file": MAIN_TRACK_FILENAME,
-                }
-            }
-            if self._ended_at is not None:
-                track[MAIN_TRACK_ID]["ended_at"] = self._ended_at.isoformat()
+            tracks[MAIN_TRACK_ID] = AudioTrackMetadata(
+                started_at=self._started_at,
+                ended_at=self._ended_at,
+                sample_rate=SAMPLE_RATE,
+                channels=CHANNELS,
+                audio_file=MAIN_TRACK_FILENAME,
+            )
+        metadata = SessionAudioMetadata(
+            session_id=self.session_id,
+            session_start=self._session_start,
+            tracks=tracks,
+        )
         _atomic_write_json(
-            self.sidecar_path,
-            {
-                "session_id": self.session_id,
-                "session_start": self._session_start.isoformat(),
-                "tracks": track,
-            },
+            self.sidecar_path, metadata.model_dump(mode="json", exclude_none=True)
         )
 
     def __enter__(self) -> "SessionAudioCapture":
         return self.start()
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> None:
         self.stop()

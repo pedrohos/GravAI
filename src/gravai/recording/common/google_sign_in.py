@@ -40,7 +40,10 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from logging import Logger
 from urllib.parse import urlparse
+
+from playwright.sync_api import Locator, Page
 
 from gravai.config.settings import get_settings
 from gravai.recording.common.human_input import (
@@ -185,7 +188,7 @@ _BLOCKING_SCREENS: tuple[tuple[str, str], ...] = (
 # nobody came. common/vnc.py's CaptchaHandoff.solve is the implementation; this
 # module only ever calls it, so that the part that needs eyes is somewhere else
 # entirely.
-CaptchaSolver = Callable[[object], bool]
+CaptchaSolver = Callable[[Page], bool]
 
 
 class GoogleSignInError(RuntimeError):
@@ -231,7 +234,7 @@ def configured_credentials() -> GoogleCredentials | None:
     return GoogleCredentials(email=email, password=password)
 
 
-def on_sign_in_page(page) -> bool:
+def on_sign_in_page(page: Page) -> bool:
     """Whether the tab has left Meet for the account chooser.
 
     Read from the URL rather than the page: the sign-in copy is served in the
@@ -242,11 +245,11 @@ def on_sign_in_page(page) -> bool:
     return _host(page) == _ACCOUNTS_HOST
 
 
-def back_on_meet(page) -> bool:
+def back_on_meet(page: Page) -> bool:
     return _host(page) == _MEET_HOST
 
 
-def _host(page) -> str:
+def _host(page: Page) -> str:
     try:
         return urlparse(page.url).hostname or ""
     except Exception:
@@ -254,14 +257,14 @@ def _host(page) -> str:
         return ""
 
 
-def _page_text(page) -> str:
+def _page_text(page: Page) -> str:
     try:
         return page.inner_text("body").replace("’", "'").replace("ʼ", "'").casefold()
     except Exception:
         return ""
 
 
-def captcha_visible(page) -> bool:
+def captcha_visible(page: Page) -> bool:
     """Whether Google is showing the 'type the text you see' challenge."""
     for selector in _CAPTCHA_SELECTORS:
         try:
@@ -272,7 +275,7 @@ def captcha_visible(page) -> bool:
     return False
 
 
-def _blocking_reason(page) -> str | None:
+def _blocking_reason(page: Page) -> str | None:
     """What the page says, when what it says ends the attempt."""
     body = _page_text(page)
     if not body:
@@ -283,7 +286,7 @@ def _blocking_reason(page) -> str | None:
     return None
 
 
-def _raise_if_stopped(page, captcha_solver: CaptchaSolver | None = None) -> float:
+def _raise_if_stopped(page: Page, captcha_solver: CaptchaSolver | None = None) -> float:
     """Ends the attempt on any screen it cannot get past on its own.
 
     Returns the seconds it spent waiting on a person, which is zero on every
@@ -323,12 +326,12 @@ def _raise_if_stopped(page, captcha_solver: CaptchaSolver | None = None) -> floa
 
 
 def _wait_for_field(
-    page,
+    page: Page,
     selectors: tuple[str, ...],
     what: str,
     timeout_s: float = _FIELD_TIMEOUT_S,
     captcha_solver: CaptchaSolver | None = None,
-):
+) -> Locator | None:
     """Waits for the first of `selectors` to be visible on the page.
 
     Polled rather than `wait_for_selector`: a wrong password and a page that is
@@ -372,7 +375,7 @@ def _wait_for_field(
         page.wait_for_timeout(_POLL_INTERVAL_MS)
 
 
-def _type_into(page, field, text: str) -> None:
+def _type_into(page: Page, field: Locator, text: str) -> None:
     """Clicks into a field and types it out, keystroke by keystroke."""
     move_and_click(page, field)
     # The beat between clicking a field and starting to type it.
@@ -380,7 +383,7 @@ def _type_into(page, field, text: str) -> None:
     type_like_a_person(page, text)
 
 
-def _submit(page, logger) -> None:
+def _submit(page: Page, logger: Logger) -> None:
     """Presses whichever 'Next' this step renders.
 
     Both steps render a plain <button>Next</button> with no id - the
@@ -397,7 +400,7 @@ def _submit(page, logger) -> None:
     page.keyboard.press("Enter")
 
 
-def _on_sign_in_screen(page) -> bool:
+def _on_sign_in_screen(page: Page) -> bool:
     """Whether the tab is still on a screen that is part of signing in."""
     try:
         parsed = urlparse(page.url)
@@ -407,8 +410,8 @@ def _on_sign_in_screen(page) -> bool:
 
 
 def _wait_until_signed_in(
-    page,
-    logger,
+    page: Page,
+    logger: Logger,
     timeout_s: float = _ACCEPTED_TIMEOUT_S,
     captcha_solver: CaptchaSolver | None = None,
 ) -> None:
@@ -442,9 +445,9 @@ def _wait_until_signed_in(
 
 
 def sign_in(
-    page,
+    page: Page,
     credentials: GoogleCredentials,
-    logger,
+    logger: Logger,
     screenshot: Callable[[str], str | None] | None = None,
     captcha_solver: CaptchaSolver | None = None,
 ) -> None:

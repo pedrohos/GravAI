@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class RecordingType(Enum):
@@ -41,14 +41,17 @@ class SpeechSegment(BaseModel):
 class Track(BaseModel):
     # start_time: int
     # end_time: int
-    wav_file_path: str
+    audio_file_path: str = Field(validation_alias=AliasChoices("audio_file_path", "wav_file_path"))
     # The same audio with the silence removed, and the segments it was built
     # from. Whisper invents speech in silence - a track that is 220 seconds long
     # around 4 seconds of talking comes back with "E aí" every 30 seconds, which
     # is its window length - so transcription reads this one and maps the offsets
     # it gets back onto the meeting timeline through `speech_segments`.
-    speech_wav_file_path: str | None = None
-    speech_segments: list[SpeechSegment] = []
+    speech_audio_file_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("speech_audio_file_path", "speech_wav_file_path"),
+    )
+    speech_segments: list[SpeechSegment] = Field(default_factory=list)
 
 class ParticipantData(BaseModel):
     participant_id: str

@@ -15,3 +15,7 @@ frontend-dev:
 
 frontend-build:
 	npm --prefix src/frontend ci && npm --prefix src/frontend run build
+
+# Python types; the frontend has its own `npm run typecheck` command.
+typecheck:
+	uv run pyright

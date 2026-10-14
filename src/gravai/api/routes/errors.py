@@ -6,6 +6,9 @@ whichever route was asked, and a route that got it slightly differently would
 have callers retrying the wrong failures.
 """
 
+from __future__ import annotations
+
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 from fastapi import HTTPException
@@ -20,7 +23,7 @@ logger = get_logger("api.routes")
 
 
 @contextmanager
-def handled(operation: str, target: str):
+def handled(operation: str, target: str) -> Iterator[None]:
     try:
         yield
     except HTTPException:

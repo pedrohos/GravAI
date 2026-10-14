@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 
 # Whisper failures often come back as an HTML error page or a long stack trace,
@@ -13,7 +15,7 @@ class WhisperError(Exception):
     request, so callers can react to it rather than catching bare Exception.
     """
 
-    def __init__(self, status_code: int, body: str, url: str, audio_file: str | None = None):
+    def __init__(self, status_code: int, body: str, url: str, audio_file: str | None = None) -> None:
         self.status_code = status_code
         self.body = body
         self.url = url

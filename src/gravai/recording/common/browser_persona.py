@@ -42,6 +42,8 @@ from functools import lru_cache
 from importlib import resources
 from typing import Any
 
+from playwright.sync_api import Page
+
 # Injected into every frame; read from disk once per process.
 _SCRIPT_PATH = resources.files("gravai.recording") / "common" / "browser_persona.js"
 
@@ -238,7 +240,7 @@ def init_script(persona: BrowserPersona) -> str:
     return _script_template().replace("{{PERSONA}}", json.dumps(persona.js_config))
 
 
-def launch_kwargs(persona: BrowserPersona, headless: bool = True, channel: str | None = "chrome") -> dict:
+def launch_kwargs(persona: BrowserPersona, headless: bool = True, channel: str | None = "chrome") -> dict[str, Any]:
     """Launch options for `chromium.launch`.
 
     `channel="chrome"` runs the real Google Chrome rather than the bundled
@@ -255,7 +257,7 @@ def launch_kwargs(persona: BrowserPersona, headless: bool = True, channel: str |
     return kwargs
 
 
-def context_kwargs(persona: BrowserPersona) -> dict:
+def context_kwargs(persona: BrowserPersona) -> dict[str, Any]:
     """Context options that belong to the persona rather than to the caller."""
     return {
         "locale": persona.locale,
@@ -265,7 +267,7 @@ def context_kwargs(persona: BrowserPersona) -> dict:
     }
 
 
-def apply_persona(page, persona: BrowserPersona = WINDOWS_CHROME) -> None:
+def apply_persona(page: Page, persona: BrowserPersona = WINDOWS_CHROME) -> None:
     """Applies the header-level half of the persona to one page.
 
     Must run before the page navigates: the overrides are read when a request is
@@ -303,7 +305,7 @@ def apply_persona(page, persona: BrowserPersona = WINDOWS_CHROME) -> None:
             pass
 
 
-def _use_real_brands(page, metadata: dict) -> None:
+def _use_real_brands(page: Page, metadata: dict[str, Any]) -> None:
     """Keeps this Chrome's own brand list, relabelled for the persona.
 
     Chrome pads `sec-ch-ua` with a deliberately varying junk brand ('Not;A=Brand'

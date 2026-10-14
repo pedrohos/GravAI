@@ -1,13 +1,15 @@
 """Exercise a running backend against either simulator and check recorded audio."""
+from __future__ import annotations
+
 import argparse
+import subprocess
 import time
-import wave
-from io import BytesIO
+from array import array
 
 import httpx
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--api', default='http://localhost:8000')
     parser.add_argument('--meeting-url', required=True, help='URL reachable by the backend browser')
@@ -31,11 +33,16 @@ def main():
             raise RuntimeError(job.get('error') or job['status'])
         recording_id = job['recording_id']
         response = client.get(f'/recordings/{recording_id}/audio'); response.raise_for_status()
-        with wave.open(BytesIO(response.content)) as audio:
-            frames = audio.readframes(audio.getnframes())
-            if audio.getnframes() == 0 or not any(frames):
-                raise AssertionError('Recording has no audible samples')
-            print(f"Recorded {audio.getnframes()/audio.getframerate():.2f}s of audio")
+        decoded = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+             "-ac", "1", "-ar", "48000", "-f", "s16le", "pipe:1"],
+            input=response.content, capture_output=True, check=True,
+        )
+        samples = array("h")
+        samples.frombytes(decoded.stdout)
+        if not samples or not any(samples):
+            raise AssertionError('Recording has no audible samples')
+        print(f"Recorded {len(samples)/48000:.2f}s of audio")
         response = client.get(f'/recordings/{recording_id}'); response.raise_for_status()
         recording = response.json()
         if not any(p['segments'] for p in recording['participants']):

@@ -1,9 +1,10 @@
 import ast
 import json
 from pathlib import Path
+from typing import Any
 
 
-def format_and_save_single_segment(file_path: Path, content: str | list | dict) -> Path:
+def format_and_save_single_segment(file_path: Path, content: str | list[Any] | dict[str, Any]) -> Path:
     """
     Writes the segments as JSON and returns the path actually written.
     """

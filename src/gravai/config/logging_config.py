@@ -27,7 +27,7 @@ class _TrimScope(logging.Filter):
         return True
 
 
-def _build_handler(handler: logging.Handler) -> logging.Handler:
+def _build_handler[HandlerT: logging.Handler](handler: HandlerT) -> HandlerT:
     handler.setFormatter(logging.Formatter(fmt=_LOG_FORMAT, datefmt=_DATE_FORMAT))
     handler.addFilter(_TrimScope())
     return handler
@@ -83,7 +83,7 @@ def get_logger(
     if handler is None:
         os.makedirs(log_dir, exist_ok=True)
         handler = _build_handler(logging.FileHandler(os.path.join(log_dir, filename)))
-        _session_handlers[session_key] = handler  # type: ignore[assignment]
+        _session_handlers[session_key] = handler
     if handler not in logger.handlers:
         logger.addHandler(handler)
 

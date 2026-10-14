@@ -25,7 +25,7 @@ def _session(tmp_path, main_track: str | None, with_participant: bool = True) ->
         tracks["Ana"] = ParticipantData(
             participant_id="Ana",
             participant_name="Ana",
-            track=Track(wav_file_path=str(participant_track)),
+            track=Track(audio_file_path=str(participant_track)),
         )
     return Session(
         session_id="session-1",

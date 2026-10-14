@@ -1,16 +1,18 @@
+from __future__ import annotations
+
 from gravai.config.settings import get_settings
-from gravai.models.common import Session
+from gravai.models.common import ParticipantDataT, Session, TranscriptedSession
 from gravai.transcribe.base import (
     transcribe_meeting_tracks as transcribe_meeting_tracks_base,
 )
 
 
 def transcribe_meeting_tracks(
-        session: Session,
+        session: Session[ParticipantDataT],
         whisper_server_host: str | None = None,
         whisper_server_port: int | None = None,
         language: str | None = None,
-    ):
+    ) -> TranscriptedSession:
     settings = get_settings()
     whisper_host = whisper_server_host or settings.WHISPER_HOST
     whisper_port = int(whisper_server_port or settings.WHISPER_PORT)

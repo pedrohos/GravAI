@@ -1,5 +1,5 @@
-import os
 import json
+import os
 from datetime import UTC, datetime
 
 STOP_REQUEST_FILENAME = "stop.request"

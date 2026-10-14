@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import multiprocessing as mp
 import os
 import queue
@@ -5,6 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import datetime
 from multiprocessing import Queue
+from multiprocessing.context import SpawnContext
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +15,7 @@ from pydantic import BaseModel
 
 from gravai.config.logging_config import get_logger, release_session_logs
 from gravai.config.settings import get_settings
+from gravai.models.events import RecorderResult, VadEvent, VadMetadata
 from gravai.recording.session_audio_capture import SessionAudioCapture
 from gravai.recording.utils import _load_text
 
@@ -20,14 +24,24 @@ from gravai.recording.utils import _load_text
 _RESULT_QUEUE_TIMEOUT_S = 30.0
 
 class MeetingRecorder(BaseModel, ABC):
-    vad_observer_js_path: Path | None
+    vad_observer_js_path: Path | None = None
 
     # Is run on a separate process
     @abstractmethod
-    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, vad_observer_js, vad_events: list[dict], vad_meta: dict, audio_sink: str | None):
+    def record_meeting(
+        self,
+        meeting_url: str,
+        q: Queue[RecorderResult],
+        output_dir: str,
+        debug: bool,
+        vad_observer_js: str,
+        vad_events: list[VadEvent],
+        vad_meta: VadMetadata,
+        audio_sink: str | None,
+    ) -> None:
         raise NotImplementedError("Subclasses must implement this method")
 
-    def prepare_vad_observer(self, meeting_url: str, session_id: str) -> tuple[str, list[dict], dict]:
+    def prepare_vad_observer(self, meeting_url: str, session_id: str) -> tuple[str, list[VadEvent], VadMetadata]:
         """Script injected into the page to detect speaker activity and the timeline it fills.
 
         Meet and Teams only show who is speaking through an animated level indicator,
@@ -36,8 +50,8 @@ class MeetingRecorder(BaseModel, ABC):
         """
         assert self.vad_observer_js_path, "Expected a vad observer path to be set"
 
-        vad_events: list[dict] = []
-        vad_meta = {
+        vad_events: list[VadEvent] = []
+        vad_meta: VadMetadata = {
             "session_id": session_id,
             "meeting_url": meeting_url,
             "page_start_ms": None,
@@ -136,7 +150,7 @@ class MeetingRecorder(BaseModel, ABC):
                     )
                     raise RuntimeError(f"Unexpected result from recording process: {res_type!r}")
 
-            # Leaving the block stopped ffmpeg, finalized the wav header and
+            # Leaving the block stopped ffmpeg, finalized the FLAC header and
             # stamped the sidecar's ended_at - so the directory returned here is
             # complete and ready to slice.
             logger.info(f"Recording finished successfully for session {session_id}")
@@ -149,12 +163,12 @@ class MeetingRecorder(BaseModel, ABC):
             raise
 
 
-    def setup(self, output_dir: str):
+    def setup(self, output_dir: str) -> tuple[str, str, SpawnContext, Queue[RecorderResult]]:
         # A context instead of set_start_method(force=True): the global start
         # method is process-wide, so setting it per recording would race with any
         # other recording starting at the same time.
         ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q: Queue[RecorderResult] = ctx.Queue()
 
         if not output_dir:
             output_dir = "/tmp"

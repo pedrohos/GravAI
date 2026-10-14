@@ -1,19 +1,22 @@
 """Run with python -m gravai.simulation.server --scenario scenarios/basic.json."""
+from __future__ import annotations
+
 import argparse
 import asyncio
-from contextlib import asynccontextmanager
-import json
 import hashlib
-from pathlib import Path
+import json
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Literal, Self
 from uuid import uuid4
-from typing import Literal
 
+import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-import uvicorn
 
 
 class Participant(BaseModel):
@@ -40,7 +43,7 @@ class Scenario(BaseModel):
     outages: list[tuple[float, float]] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_timeline(self):
+    def validate_timeline(self) -> Self:
         ids = [p.id for p in self.participants]
         if len(set(ids)) != len(ids) or any(not i for i in ids):
             raise ValueError("Participant ids must be unique and nonempty")
@@ -57,7 +60,7 @@ class Scenario(BaseModel):
                 previous_end = end
         return self
 
-    def expected_turns(self):
+    def expected_turns(self) -> dict[str, list[tuple[float, float]]]:
         """Audible intervals before codec buffering and observer/slicer padding."""
         result = {}
         for participant in self.participants:
@@ -76,7 +79,7 @@ class Scenario(BaseModel):
 
 
 def create_app(scenario_path: Path, artifacts: Path, port: int, channel: str,
-               simulated_provider: str = "meet"):
+               simulated_provider: str = "meet") -> FastAPI:
     scenario_path = scenario_path.resolve()
     scenario = Scenario.model_validate_json(scenario_path.read_text())
     if simulated_provider not in ("meet", "teams"):
@@ -84,12 +87,12 @@ def create_app(scenario_path: Path, artifacts: Path, port: int, channel: str,
     scenario_hash = hashlib.sha256(scenario.model_dump_json().encode()).hexdigest()
     fixtures = {p.id: (scenario_path.parent / p.audio).resolve()
                 for p in scenario.participants if p.audio}
-    for fixture in fixtures.values():
-        if not fixture.is_file():
-            raise ValueError(f"Missing audio fixture: {fixture}")
+    for fixture_path in fixtures.values():
+        if not fixture_path.is_file():
+            raise ValueError(f"Missing audio fixture: {fixture_path}")
 
     @asynccontextmanager
-    async def lifespan(app):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         artifacts.mkdir(parents=True, exist_ok=True)
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(channel=channel, headless=True,
@@ -103,26 +106,26 @@ def create_app(scenario_path: Path, artifacts: Path, port: int, channel: str,
     app = FastAPI(title="GravAI meeting simulator", lifespan=lifespan)
 
     @app.get("/healthz")
-    def health():
+    def health() -> dict[str, Any]:
             return {"status": "ok", "provider": simulated_provider, "scenario": scenario.model_dump()}
 
     @app.get("/client.js")
-    def client():
+    def client() -> FileResponse:
         return FileResponse(Path(__file__).with_name("client.js"), media_type="text/javascript")
 
     @app.get("/fixture/{participant_id}")
-    def fixture(participant_id: str):
+    def fixture(participant_id: str) -> FileResponse:
         from fastapi import HTTPException
         if participant_id not in fixtures:
             raise HTTPException(404)
         return FileResponse(fixtures[participant_id])
 
     @app.get("/sender")
-    def sender():
+    def sender() -> HTMLResponse:
         return HTMLResponse('<script src="/client.js"></script>')
 
     @app.get("/simulated-meeting/{provider}/{meeting_id}")
-    def meeting(provider: Literal["meet", "teams"], meeting_id: str):
+    def meeting(provider: Literal["meet", "teams"], meeting_id: str) -> HTMLResponse:
         if provider != simulated_provider:
             from fastapi import HTTPException
             raise HTTPException(404, "This environment serves " + simulated_provider)
@@ -145,7 +148,7 @@ def create_app(scenario_path: Path, artifacts: Path, port: int, channel: str,
         <button id="join">Ask to join</button></main><script src="/client.js"></script>''')
 
     @app.websocket("/signal")
-    async def signal(ws: WebSocket):
+    async def signal(ws: WebSocket) -> None:
         await ws.accept()
         run_id = str(uuid4())
         provider = ws.query_params.get("provider", "meet")
@@ -157,14 +160,14 @@ def create_app(scenario_path: Path, artifacts: Path, port: int, channel: str,
         page = None
         reader = None
 
-        def log(kind, data):
+        def log(kind: str, data: Any) -> None:
             trace.append({"elapsed": time.monotonic() - started, "kind": kind, "data": data})
 
-        async def send(data):
+        async def send(data: Any) -> None:
             log("server", data)
             await ws.send_json(data)
 
-        async def receive_stats():
+        async def receive_stats() -> None:
             while True:
                 log("client", await ws.receive_json())
 
@@ -181,7 +184,7 @@ def create_app(scenario_path: Path, artifacts: Path, port: int, channel: str,
             await page.wait_for_function("() => !!window.makeOffer")
             offer = await page.evaluate("s => window.makeOffer(s)", scenario.model_dump())
             await send({"type": "offer", "sdp": offer, "scenario": scenario.model_dump(), "run_id": run_id})
-            async def receive_answer():
+            async def receive_answer() -> dict[str, Any]:
                 while True:
                     message = await ws.receive_json()
                     log("client", message)
@@ -242,7 +245,7 @@ def create_app(scenario_path: Path, artifacts: Path, port: int, channel: str,
     return app
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", type=Path)
     parser.add_argument("--artifacts", type=Path, default=Path("tmp/simulation"))

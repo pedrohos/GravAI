@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import time
 from multiprocessing import Queue
@@ -8,6 +10,8 @@ from pydantic import model_validator
 
 from gravai.config.logging_config import get_logger
 from gravai.config.settings import get_settings
+from gravai.jobs.stop_signal import stop_requested
+from gravai.models.events import RecorderResult, VadEvent, VadMetadata
 from gravai.recording.session_audio_capture import (
     AUDIO_LIVENESS_EVERY_S,
     MAIN_TRACK_FILENAME,
@@ -15,7 +19,6 @@ from gravai.recording.session_audio_capture import (
     capture_is_audible,
     log_capture_status,
 )
-from gravai.jobs.stop_signal import stop_requested
 from gravai.recording.utils import _meeting_origin, _write_vad_timeline
 
 from ..provider_base import MeetingRecorder
@@ -32,7 +35,17 @@ class TeamsMeetingRecorder(MeetingRecorder):
         return self
 
     # Is run on a separate process
-    def record_meeting(self, meeting_url: str, q: Queue, output_dir: str, debug: bool, vad_observer_js, vad_events: list[dict], vad_meta: dict, audio_sink: str | None):
+    def record_meeting(
+        self,
+        meeting_url: str,
+        q: Queue[RecorderResult],
+        output_dir: str,
+        debug: bool,
+        vad_observer_js: str,
+        vad_events: list[VadEvent],
+        vad_meta: VadMetadata,
+        audio_sink: str | None,
+    ) -> None:
         logger = get_logger("recording.teams", output_dir)
         main_track_path = os.path.join(output_dir, MAIN_TRACK_FILENAME)
         try:
@@ -44,7 +57,7 @@ class TeamsMeetingRecorder(MeetingRecorder):
                     # recording's sink and nowhere else. Headless Chrome plays
                     # into Pulse exactly as a windowed one does - measured at
                     # the same level - so this stays headless.
-                    env=browser_env(audio_sink),
+                    env=dict(browser_env(audio_sink)),
                     ignore_default_args=["--mute-audio"],
                     args=[
                         "--use-fake-ui-for-media-stream",

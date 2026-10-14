@@ -1,22 +1,28 @@
+from __future__ import annotations
+
+import datetime
 import json
 import os
 import subprocess
 import time
 from collections import defaultdict
-import datetime
 from glob import glob
 from pathlib import Path
+from typing import Any
 
 from gravai.config.logging_config import get_logger
+from gravai.models.audio import SessionAudioMetadata
 from gravai.models.common import (
     ActionType,
     ParticipantData,
+    ParticipantDataT,
     Session,
     SessionDataDTO,
     SpeechSegment,
     Track,
     TrackInfoDTO,
 )
+from gravai.models.events import ParticipantEvent
 
 
 def _participant_track_path(audio_tracks_path: str, participant_id: str) -> str:
@@ -31,7 +37,7 @@ def _participant_track_path(audio_tracks_path: str, participant_id: str) -> str:
     namespaces, so they are deliberately not shared.
     """
     safe_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in participant_id)
-    return os.path.join(audio_tracks_path, f"track_{safe_id}.wav")
+    return os.path.join(audio_tracks_path, f"track_{safe_id}.flac")
 
 # The ws audio server rewrites the session sidecar once per track, from each
 # track's connection handler, after re-encoding that track (ffmpeg pitch
@@ -59,7 +65,7 @@ def _wait_for_finalized_sidecar(
     main_track_key: str,
     log_dir: str,
     timeout: float = _FILE_WAIT_TIMEOUT_S,
-) -> dict:
+) -> SessionAudioMetadata:
     """Waits until the sidecar records ended_at for the main track.
 
     ended_at is the last field written for a track, so its presence is what
@@ -84,7 +90,7 @@ def _wait_for_finalized_sidecar(
             if "ended_at" in track:
                 if announced:
                     logger.info(f"Session sidecar finalized for main track {main_track_key}")
-                return session_info
+                return SessionAudioMetadata.model_validate(session_info)
 
         if time.time() >= deadline:
             raise RuntimeError(
@@ -99,7 +105,7 @@ def _wait_for_finalized_sidecar(
         time.sleep(_FILE_WAIT_POLL_INTERVAL_S)
 
 
-def _load_json_or_raise(path: str, label: str) -> dict:
+def _load_json_or_raise(path: str, label: str) -> dict[str, Any]:
     if not os.path.exists(path):
         raise RuntimeError(f"Missing {label} file: {path}")
     if os.path.getsize(path) == 0:
@@ -117,7 +123,10 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
     # Sorted so the choice is reproducible, and more than one is rejected rather
     # than silently picked between - a second main track means tracks from two
     # sessions landed in one directory, and slicing the wrong one is unrecoverable.
-    main_track_candidates = sorted(glob(os.path.join(slice_audio_tracks, "track_mainAudio*.wav")))
+    main_track_candidates = sorted(
+        path for suffix in ("flac", "wav")
+        for path in glob(os.path.join(slice_audio_tracks, f"track_mainAudio*.{suffix}"))
+    )
     if not main_track_candidates:
         raise RuntimeError(f"Missing main audio track in {slice_audio_tracks}")
     if len(main_track_candidates) > 1:
@@ -139,11 +148,13 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
 
     vad_timeline = _load_json_or_raise(vad_timeline_path, "VAD timeline")
 
+    main_track = session_info.tracks[main_audio_track_name_sidecar_key]
+    assert main_track.ended_at is not None, "Main audio track must be finalized"
     session_data = SessionDataDTO(
-        start_time=datetime.datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["started_at"]),
-        end_time=datetime.datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["ended_at"]),
+        start_time=main_track.started_at,
+        end_time=main_track.ended_at,
         main_track_name=main_audio_track_name,
-        session_id=session_info["session_id"],
+        session_id=session_info.session_id,
         events=[
             TrackInfoDTO(
                 # action=ActionType.START if event["type"] == "start" else ActionType.END,
@@ -156,8 +167,8 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
     )
     return session_data
 
-def _process_participant_data(session_data: SessionDataDTO, group_slices_by_name: bool = True) -> dict:
-    all_participants_data = defaultdict(list)
+def _process_participant_data(session_data: SessionDataDTO, group_slices_by_name: bool = True) -> dict[str, list[ParticipantEvent]]:
+    all_participants_data: defaultdict[str, list[ParticipantEvent]] = defaultdict(list)
     logger = get_logger("slicing")
     logger.info(f"Slicing participants data for session {session_data.session_id} (group_slices_by_name={group_slices_by_name})")
     for event in session_data.events:
@@ -172,7 +183,7 @@ def _process_participant_data(session_data: SessionDataDTO, group_slices_by_name
     logger.info(f"Sliced {len(all_participants_data)} participants data for session {session_data.session_id}")
     return all_participants_data
 
-def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data: dict) -> dict:
+def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data: dict[str, list[ParticipantEvent]]) -> dict[str, list[tuple[ActionType, datetime.timedelta]]]:
     participants_tracks = {}
     class_counts = {event.class_count for event in session_data.events}
     if not class_counts:
@@ -250,10 +261,10 @@ def _pad_segments(
 def _speech_track_path(audio_tracks_path: str, participant_id: str) -> str:
     """Path of a participant's speech-only track, next to the aligned one."""
     aligned = Path(_participant_track_path(audio_tracks_path, participant_id))
-    return str(aligned.with_name(f"{aligned.stem}_speech.wav"))
+    return str(aligned.with_name(f"{aligned.stem}_speech.flac"))
 
 
-def _ffmpeg_slice(audio_tracks_path, session_data, participants_tracks_locations) -> dict:
+def _ffmpeg_slice(audio_tracks_path: str, session_data: SessionDataDTO, participants_tracks_locations: dict[str, list[tuple[ActionType, datetime.timedelta]]]) -> dict[str, list[tuple[float, float]]]:
     """Writes two files per participant and returns the segments behind them.
 
     The aligned track keeps the meeting's timeline, silence and all, so anything
@@ -340,7 +351,7 @@ def _write_speech_track(main_track_path: str, output_path: str, segments: list[t
 
 class Slicer:
     @staticmethod
-    def slice_audio_tracks_teams(audio_tracks_path: str, group_slices_by_name: bool = True):
+    def slice_audio_tracks_teams(audio_tracks_path: str, group_slices_by_name: bool = True) -> None:
         session_data_dto = _extract_session_dto(audio_tracks_path)
         all_participants_data = _process_participant_data(session_data_dto, group_slices_by_name)
         participants_tracks_locations = _find_participant_tracks(session_data_dto, all_participants_data)
@@ -360,18 +371,18 @@ class Slicer:
             }, f, default=str)
 
     @staticmethod
-    def slice_and_create_session_teams_audio_track(audio_tracks_path: str, group_slices_by_name: bool = True) -> Session:
+    def slice_and_create_session_teams_audio_track(audio_tracks_path: str, group_slices_by_name: bool = True) -> Session[ParticipantData]:
         Slicer.slice_audio_tracks_teams(audio_tracks_path, group_slices_by_name) # TODO: Add support for Google Meet slicing in the future
         session = Slicer.create_session_teams(audio_tracks_path)
         return session
     
     @staticmethod
-    def save_session_data(session: Session, output_path: str):
+    def save_session_data(session: Session[ParticipantDataT], output_path: str) -> None:
         with open(output_path, "w") as f:
             json.dump(session.model_dump(), f, default=str)
 
     @staticmethod
-    def create_session_teams(audio_tracks_path: str):
+    def create_session_teams(audio_tracks_path: str) -> Session[ParticipantData]:
         with open(os.path.join(audio_tracks_path, "slice_metadata.json"), "r") as f:
             metadata = json.load(f)
 
@@ -390,8 +401,8 @@ class Slicer:
                 participant_id=participant_id,
                 participant_name=participant_name,
                 track=Track(
-                    wav_file_path=participant_track_path,
-                    speech_wav_file_path=(
+                    audio_file_path=participant_track_path,
+                    speech_audio_file_path=(
                         speech_track_path if os.path.exists(speech_track_path) else None
                     ),
                     speech_segments=[

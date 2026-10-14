@@ -19,15 +19,26 @@ dependencies = [
     "websockets>=16.0",
     "opuslib>=3.0.1",
     "requests>=2.34.2",
-    "sqlalchemy>=2.0,<2.1",
     "pydantic-settings>=2.14.1",
     "python-dotenv>=1.2.2",
+    "sqlalchemy>=2.0,<2.1",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.2"
+    "pyright>=1.1.414",
+    "pytest>=9.0.2",
+    "types-requests>=2.33.0.20261006",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.pyright]
+include = ["src/gravai"]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
+reportMissingTypeArgument = "error"
+reportUnknownParameterType = "error"

@@ -22,7 +22,7 @@ from gravai.transcribe.base import (
 )
 
 
-def _wav(path, filter_spec: str, seconds: float = 3.0) -> str:
+def _generate_audio(path, filter_spec: str, seconds: float = 3.0) -> str:
     subprocess.run(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
          "-f", "lavfi", "-i", filter_spec, "-t", str(seconds), str(path)],
@@ -32,13 +32,13 @@ def _wav(path, filter_spec: str, seconds: float = 3.0) -> str:
 
 
 def test_digital_silence_is_recognised(tmp_path):
-    silent = _wav(tmp_path / "silent.wav", "anullsrc=r=48000:cl=mono")
+    silent = _generate_audio(tmp_path / "silent.wav", "anullsrc=r=48000:cl=mono")
     assert is_silent(silent)
 
 
 def test_speech_level_audio_is_not_recognised_as_silent(tmp_path):
     # -14 dBFS is about where speech peaks in these recordings.
-    tone = _wav(tmp_path / "tone.wav", "sine=frequency=440:sample_rate=48000:beep_factor=0")
+    tone = _generate_audio(tmp_path / "tone.wav", "sine=frequency=440:sample_rate=48000:beep_factor=0")
     subprocess.run(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", tone,
          "-af", "volume=-14dB", str(tmp_path / "quiet.wav")],
@@ -49,8 +49,8 @@ def test_speech_level_audio_is_not_recognised_as_silent(tmp_path):
 
 def test_the_threshold_sits_between_the_two(tmp_path):
     """The gate is only safe while both cases stay well clear of it."""
-    silent = peak_dbfs(_wav(tmp_path / "silent.wav", "anullsrc=r=48000:cl=mono"))
-    speech = peak_dbfs(_wav(tmp_path / "tone.wav", "sine=frequency=440:sample_rate=48000"))
+    silent = peak_dbfs(_generate_audio(tmp_path / "silent.wav", "anullsrc=r=48000:cl=mono"))
+    speech = peak_dbfs(_generate_audio(tmp_path / "tone.wav", "sine=frequency=440:sample_rate=48000"))
     assert silent < _SILENCE_PEAK_DBFS - 20, f"silence measured {silent}, too close to the gate"
     assert speech > _SILENCE_PEAK_DBFS + 20, f"a tone measured {speech}, too close to the gate"
 

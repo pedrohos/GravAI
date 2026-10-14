@@ -28,6 +28,9 @@ import multiprocessing as mp
 import os
 import signal
 import time
+from collections.abc import Callable
+from multiprocessing.process import BaseProcess
+from types import FrameType
 from uuid import uuid4
 
 from gravai.api import pipeline
@@ -85,7 +88,7 @@ class _Cancelled(BaseException):
 # entries in the process table freed; a job's fate is read from the database, not
 # from here, because another worker - or the API after a restart - has the
 # database and does not have this.
-_children: dict[str, mp.process.BaseProcess] = {}
+_children: dict[str, BaseProcess] = {}
 
 
 def _reap() -> None:
@@ -310,7 +313,7 @@ def _run_job(job_id: str) -> None:
     logger.info(f"Job {job_id} finished")
 
 
-def _raise_cancelled(signum, frame) -> None:
+def _raise_cancelled(signum: int, frame: FrameType | None) -> None:
     raise _Cancelled()
 
 
@@ -364,7 +367,7 @@ def _mark_recording_failed(job_id: str) -> None:
 
 def _sliced_hook(
     job_id: str, session_dir: str, meeting_url: str | None, provider: str | None
-):
+) -> Callable[[str, Session[ParticipantData]], None]:
     """Callback that catalogues a recording the moment slicing is done with it.
 
     Transcription is the one stage of this pipeline that fails for reasons that
@@ -380,7 +383,7 @@ def _sliced_hook(
     failed transcription now leaves a recording somebody can still listen to.
     """
 
-    def on_sliced(_metadata_path: str, session) -> None:
+    def on_sliced(_metadata_path: str, session: Session[ParticipantData]) -> None:
         catalogue.save_session(
             session,
             session_dir,
@@ -398,7 +401,7 @@ def _sliced_hook(
 
 def _session_hook(
     job_id: str, meeting_url: str | None, provider: str | None
-):
+) -> Callable[[str, str], None]:
     """Callback the recorder runs as soon as it has a session directory.
 
     This is the only moment at which the job, the meeting and the directory are

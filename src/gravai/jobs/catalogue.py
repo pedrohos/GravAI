@@ -1,7 +1,7 @@
 """Turning a finished session into rows somebody can read.
 
 The pipeline's own output is a Session: a tree of file paths. That is the right
-shape for the pipeline - the next stage wants the wav, not its contents - and
+shape for the pipeline - the next stage wants the audio path, not its contents - and
 the wrong shape for a caller asking what was said in a meeting, who would have
 to fetch a directory listing and then a file per speaker to find out.
 
@@ -112,8 +112,8 @@ def save_session(
             ParticipantDTO(
                 participant_id=participant_id,
                 participant_name=participant.participant_name,
-                track_path=participant.track.wav_file_path,
-                speech_track_path=participant.track.speech_wav_file_path,
+                track_path=participant.track.audio_file_path,
+                speech_track_path=participant.track.speech_audio_file_path,
                 segments=participant.track.speech_segments,
                 transcript_text=_read_text(
                     transcription.transcription_text_file_path

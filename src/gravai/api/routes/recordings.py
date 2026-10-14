@@ -87,7 +87,7 @@ def recording_audio(recording_id: str) -> FileResponse:
         raise HTTPException(
             status_code=404, detail=f"No recording with id {recording_id}."
         )
-    return _audio_response(row.main_track_path, f"{recording_id}.wav")
+    return _audio_response(row.main_track_path, f"{recording_id}.flac")
 
 
 @router.get("/{recording_id}/participants/{participant_id}/audio")
@@ -114,7 +114,7 @@ def participant_audio(
             path = (
                 participant.speech_track_path if speech_only else participant.track_path
             )
-            return _audio_response(path, f"{participant_id}.wav")
+            return _audio_response(path, f"{participant_id}.flac")
 
     raise HTTPException(
         status_code=404,
@@ -140,7 +140,10 @@ def _audio_response(path: str | None, download_name: str) -> FileResponse:
         raise HTTPException(
             status_code=410, detail=f"The audio file is no longer on disk: {path}"
         )
-    return FileResponse(path, media_type="audio/wav", filename=download_name)
+    suffix = Path(path).suffix.lower()
+    media_type = "audio/flac" if suffix == ".flac" else "audio/wav"
+    download_name = str(Path(download_name).with_suffix(suffix))
+    return FileResponse(path, media_type=media_type, filename=download_name)
 
 
 @router.delete("/{recording_id}", status_code=status.HTTP_204_NO_CONTENT)
