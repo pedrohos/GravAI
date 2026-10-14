@@ -100,20 +100,20 @@ def test_an_end_with_nothing_open_is_ignored():
 
 
 def test_tiles_sharing_a_name_are_merged_rather_than_reduced_to_one():
-    # The live case: a signed-in bot and the host both named 'Pedro Silva', on
+    # The live case: a signed-in bot and the host both named 'John Doe', on
     # separate devices. Grouped by name their events interleave into one list,
     # and the walk has to keep reopening across them - the bot's 1.4s blip must
     # not be the only thing that survives.
     session = _session([
-        _event("Pedro Silva", "device/bot", 22.5, True),
-        _event("Pedro Silva", "device/bot", 23.3, False),
-        _event("Pedro Silva", "device/host", 32.8, True),
-        _event("Pedro Silva", "device/host", 36.9, False),
-        _event("Pedro Silva", "device/host", 43.5, True),
-        _event("Pedro Silva", "device/host", 45.6, False),
+        _event("John Doe", "device/bot", 22.5, True),
+        _event("John Doe", "device/bot", 23.3, False),
+        _event("John Doe", "device/host", 32.8, True),
+        _event("John Doe", "device/host", 36.9, False),
+        _event("John Doe", "device/host", 43.5, True),
+        _event("John Doe", "device/host", 45.6, False),
     ])
 
-    segments = _segments(session, grouped=True)["Pedro Silva"]
+    segments = _segments(session, grouped=True)["John Doe"]
 
     assert segments == [(22.5, 23.3), (32.8, 36.9), (43.5, 45.6)]
     assert sum(end - start for start, end in segments) > 5.0
@@ -121,15 +121,60 @@ def test_tiles_sharing_a_name_are_merged_rather_than_reduced_to_one():
 
 def test_ungrouped_each_device_keeps_its_own_utterances():
     session = _session([
-        _event("Pedro Silva", "device/bot", 22.5, True),
-        _event("Pedro Silva", "device/bot", 23.3, False),
-        _event("Pedro Silva", "device/host", 32.8, True),
-        _event("Pedro Silva", "device/host", 36.9, False),
-        _event("Pedro Silva", "device/host", 43.5, True),
-        _event("Pedro Silva", "device/host", 45.6, False),
+        _event("John Doe", "device/bot", 22.5, True),
+        _event("John Doe", "device/bot", 23.3, False),
+        _event("John Doe", "device/host", 32.8, True),
+        _event("John Doe", "device/host", 36.9, False),
+        _event("John Doe", "device/host", 43.5, True),
+        _event("John Doe", "device/host", 45.6, False),
     ])
 
     segments = _segments(session, grouped=False)
 
     assert segments["device/bot"] == [(22.5, 23.3)]
     assert segments["device/host"] == [(32.8, 36.9), (43.5, 45.6)]
+
+
+def test_idle_only_participants_do_not_receive_the_meeting_mix():
+    # Counts and timestamps reproduce the idle-participant/notes-bot failure.
+    events = [
+        _event("Jane Doe", "participant-1", 29.650295, False),
+        _event("Alex Doe", "participant-2", 29.650295, False),
+        _event("Ada", "ada", 40, True),
+        _event("Ada", "ada", 50, False),
+        _event("Alex Doe", "participant-2-2", 190, False),
+        _event("read.ai meeting notes", "bot", 195, False),
+    ]
+    for event in events:
+        event.class_count = 46 if event.class_count else 41
+    segments = _segments(_session(events))
+    assert segments == {
+        "Jane Doe": [], "Alex Doe": [],
+        "Ada": [(40.0, 50.0)], "read.ai meeting notes": [],
+    }
+    assert _segments(_session(events), grouped=False)["participant-2-2"] == []
+
+
+def test_single_raw_class_count_does_not_prove_speech():
+    event = _event("Jane Doe", "participant-1", 30, False)
+    event.class_count = 41
+    assert _segments(_session([event])) == {"Jane Doe": []}
+
+
+def test_binary_idle_only_session_has_no_speech():
+    assert _segments(_session([_event("Ada", "ada", 10, False)])) == {"Ada": []}
+
+
+def test_binary_speaking_only_session_is_closed_at_the_end():
+    assert _segments(_session([_event("Ada", "ada", 10, True)])) == {"Ada": [(10.0, 200.0)]}
+
+
+def test_raw_speaking_only_participant_uses_session_states():
+    events = [_event("Ada", "ada", 10, False), _event("Bob", "bob", 20, True)]
+    for event in events:
+        event.class_count = 46 if event.class_count else 41
+    assert _segments(_session(events)) == {"Ada": [], "Bob": [(20.0, 200.0)]}
+
+
+def test_empty_timeline_has_no_tracks():
+    assert _segments(_session([])) == {}

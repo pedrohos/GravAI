@@ -3,7 +3,7 @@ import os
 import subprocess
 import time
 from collections import defaultdict
-from datetime import datetime
+import datetime
 from glob import glob
 from pathlib import Path
 
@@ -140,8 +140,8 @@ def _extract_session_dto(slice_audio_tracks: str) -> SessionDataDTO:
     vad_timeline = _load_json_or_raise(vad_timeline_path, "VAD timeline")
 
     session_data = SessionDataDTO(
-        start_time=datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["started_at"]),
-        end_time=datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["ended_at"]),
+        start_time=datetime.datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["started_at"]),
+        end_time=datetime.datetime.fromisoformat(session_info["tracks"][main_audio_track_name_sidecar_key]["ended_at"]),
         main_track_name=main_audio_track_name,
         session_id=session_info["session_id"],
         events=[
@@ -174,11 +174,21 @@ def _process_participant_data(session_data: SessionDataDTO, group_slices_by_name
 
 def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data: dict) -> dict:
     participants_tracks = {}
+    class_counts = {event.class_count for event in session_data.events}
+    if not class_counts:
+        return {participant_id: [] for participant_id in all_participants_data}
+    if class_counts <= {0, 1}:
+        # Meet emits explicit binary states, including in single-state calls.
+        end_action, start_action = 0, 1
+    elif len(class_counts) == 2:
+        end_action, start_action = min(class_counts), max(class_counts)
+    elif len(class_counts) == 1:
+        # A raw Teams class count alone provides no evidence of speech.
+        return {participant_id: [] for participant_id in all_participants_data}
+    else:
+        raise ValueError("Expected only two distinct class counts for the session, representing start and end actions.")
+
     for participant_id, participant_data in all_participants_data.items():
-        class_counts = [event["class_count"] for event in participant_data]
-        end_action = min(class_counts)
-        start_action = max(class_counts)
-        assert len([c for c in class_counts if c == end_action or c == start_action]) == len(class_counts), "Expected only two distinct class counts per participant, representing start and end actions."
 
         # Alternating: a start is taken only when nothing is open, an end only
         # when something is. Both halves matter - the version that only ever
@@ -186,16 +196,16 @@ def _find_participant_tracks(session_data: SessionDataDTO, all_participants_data
         # and dropped every utterance after it, so a caller reading the result
         # saw a plausible transcript of the opening sentence and no sign that the
         # rest of the meeting had been discarded.
-        track_changes = []
+        track_changes: list[tuple[ActionType, datetime.timedelta]] = []
         for event in participant_data:
-            time_in_s = datetime.fromtimestamp(event["timestamp"] / 1000).astimezone() - session_data.start_time
+            time_in_s = datetime.datetime.fromtimestamp(event["timestamp"] / 1000).astimezone() - session_data.start_time
             is_open = bool(track_changes) and track_changes[-1][0] == ActionType.START
             if event["class_count"] == start_action:
                 if not is_open:
                     track_changes.append((ActionType.START, time_in_s))
             elif is_open:
                 track_changes.append((ActionType.END, time_in_s))
-        if track_changes[-1][0] == ActionType.START:
+        if track_changes and track_changes[-1][0] == ActionType.START:
             track_changes.append((ActionType.END, session_data.end_time - session_data.start_time))
 
         participants_tracks[participant_id] = track_changes

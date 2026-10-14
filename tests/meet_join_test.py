@@ -102,8 +102,8 @@ def test_a_call_with_a_bot_in_the_roster_is_not_warned_about():
     warnings = []
     _warn_unless_named_as_a_bot(
         [
-            {"id": "1", "participantName": "Pedro Silva"},
-            {"id": "2", "participantName": "Bot de Gravação de Pedro Silva"},
+            {"id": "1", "participantName": "John Doe"},
+            {"id": "2", "participantName": "Bot de Gravação de John Doe"},
         ],
         _FakeLogger(warnings),
     )
@@ -112,12 +112,12 @@ def test_a_call_with_a_bot_in_the_roster_is_not_warned_about():
 
 
 def test_a_call_where_nothing_is_named_like_a_bot_is_warned_about():
-    # The live case: the recording account is named 'Pedro Silva', the same as
+    # The live case: the recording account is named 'John Doe', the same as
     # the host, so the participant list gives nobody any way to tell that one of
     # the two is recording.
     warnings = []
     _warn_unless_named_as_a_bot(
-        [{"id": "1", "participantName": "Pedro Silva"}, {"id": "2", "participantName": "Pedro Silva"}],
+        [{"id": "1", "participantName": "John Doe"}, {"id": "2", "participantName": "John Doe"}],
         _FakeLogger(warnings),
     )
 
@@ -171,11 +171,11 @@ def test_the_roster_is_waited_for_rather_than_read_the_instant_we_are_in():
     # An invited account is admitted the moment it asks, so the first read lands
     # before any tile has rendered. Taking that empty read as the answer skips
     # the check silently, which is how it went unnoticed on the invited path.
-    page = _RosterPage([[], [], [{"id": "1", "participantName": "Pedro Silva"}]])
+    page = _RosterPage([[], [], [{"id": "1", "participantName": "John Doe"}]])
 
     roster = _wait_for_roster(page, _FakeLogger([]), timeout_s=30)
 
-    assert _names_the_bot_could_be(roster) == ["Pedro Silva"]
+    assert _names_the_bot_could_be(roster) == ["John Doe"]
     assert page.polls == 2
 
 
