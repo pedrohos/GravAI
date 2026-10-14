@@ -6,6 +6,7 @@ real processes, because the thing being tested is a process group - a test
 against mocks would pass with the killing broken.
 """
 
+from gravai.models.database import JobParamsDTO, JobResultDTO
 import os
 import time
 
@@ -27,7 +28,9 @@ def _wait_for(job_id, predicate, timeout=25.0):
 
 def test_a_url_no_provider_claims_is_refused_before_a_job_exists(database):
     with pytest.raises(Exception) as caught:
-        runner.submit(JobSubmission(type=JobType.RECORD, meeting_url="https://example.com/x"))
+        runner.submit(
+            JobSubmission(type=JobType.RECORD, meeting_url="https://example.com/x")
+        )
     assert "No provider matches" in str(caught.value)
     assert store.list_jobs() == []
 
@@ -39,13 +42,17 @@ def test_a_recording_job_needs_a_url_and_a_transcription_needs_a_directory(datab
         runner.submit(JobSubmission(type=JobType.TRANSCRIBE))
     with pytest.raises(runner.JobError):
         runner.submit(
-            JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir="/no/such/directory")
+            JobSubmission(
+                type=JobType.TRANSCRIBE, tracks_output_dir="/no/such/directory"
+            )
         )
 
 
 def test_a_job_that_fails_reports_why(database, tmp_path):
     """An empty directory has no main track, which slicing refuses at once."""
-    job = runner.submit(JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path)))
+    job = runner.submit(
+        JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path))
+    )
     finished = _wait_for(job.id, lambda j: j.status.is_terminal)
 
     assert finished.status is JobStatus.FAILED
@@ -56,10 +63,14 @@ def test_cancelling_kills_the_whole_process_group(database, tmp_path):
     """A main track with no finalized sidecar makes slicing wait, which is a job
     that will not end on its own - so it is the one to kill."""
     (tmp_path / "track_mainAudio-1.wav").write_bytes(b"")
-    job = runner.submit(JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path)))
+    job = runner.submit(
+        JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path))
+    )
     running = _wait_for(job.id, lambda j: j.status is JobStatus.RUNNING)
     group = os.getpgid(running.pid)
-    assert group == running.pid, "a job has to lead a process group of its own to be killable"
+    assert group == running.pid, (
+        "a job has to lead a process group of its own to be killable"
+    )
 
     cancelled = runner.cancel(job.id)
     assert cancelled.status is JobStatus.CANCELLED
@@ -79,7 +90,9 @@ def test_a_transcription_cannot_be_stopped_gently(database, tmp_path):
     """There is no point at which abandoning whisper leaves something usable, so
     stop refuses rather than quietly killing under a friendlier name."""
     (tmp_path / "track_mainAudio-1.wav").write_bytes(b"")
-    job = runner.submit(JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path)))
+    job = runner.submit(
+        JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path))
+    )
     _wait_for(job.id, lambda j: j.status is JobStatus.RUNNING)
 
     with pytest.raises(runner.JobNotStoppable) as caught:
@@ -90,8 +103,10 @@ def test_a_transcription_cannot_be_stopped_gently(database, tmp_path):
 
 
 def test_a_finished_job_can_be_neither_stopped_nor_cancelled(database):
-    store.create_job("done", JobType.RECORD, {})
-    store.finish_job("done", JobStatus.SUCCEEDED, result={})
+    store.create_job("done", JobType.RECORD, JobParamsDTO.model_validate({}))
+    store.finish_job(
+        "done", JobStatus.SUCCEEDED, result=JobResultDTO.model_validate({})
+    )
 
     with pytest.raises(runner.JobNotStoppable):
         runner.stop("done")
@@ -101,7 +116,7 @@ def test_a_finished_job_can_be_neither_stopped_nor_cancelled(database):
 
 def test_reconcile_fails_a_job_whose_process_is_gone(database):
     """A restart must not leave a row claiming to be recording for good."""
-    store.create_job("orphan", JobType.RECORD, {})
+    store.create_job("orphan", JobType.RECORD, JobParamsDTO.model_validate({}))
     # A pid that cannot be running: the kernel never hands this one out.
     store.mark_started("orphan", pid=0x7FFFFFFF)
 
@@ -113,7 +128,7 @@ def test_reconcile_fails_a_job_whose_process_is_gone(database):
 
 def test_reconcile_leaves_a_job_that_is_still_running_alone(database):
     """A job outlives the API deliberately; a reload must not end a meeting."""
-    store.create_job("live", JobType.RECORD, {})
+    store.create_job("live", JobType.RECORD, JobParamsDTO.model_validate({}))
     store.mark_started("live", os.getpid(), runner.process_start_ticks(os.getpid()))
 
     assert runner.reconcile() == []
@@ -123,7 +138,7 @@ def test_reconcile_leaves_a_job_that_is_still_running_alone(database):
 def test_a_reused_pid_is_not_mistaken_for_the_job_that_had_it(database):
     """The reason a start time is recorded at all: this pid is alive, but it is
     no longer the process the job was running in."""
-    store.create_job("stale", JobType.RECORD, {})
+    store.create_job("stale", JobType.RECORD, JobParamsDTO.model_validate({}))
     store.mark_started("stale", os.getpid(), pid_start=1)  # never this process' own
 
     assert runner.reconcile() == ["stale"]

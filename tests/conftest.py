@@ -27,10 +27,10 @@ def database(tmp_path, monkeypatch):
     path = tmp_path / "gravai.db"
     monkeypatch.setenv("DATABASE_PATH", str(path))
     get_settings.cache_clear()
-    store._initialized_paths.clear()
+    store.dispose_engines()
     yield str(path)
     get_settings.cache_clear()
-    store._initialized_paths.clear()
+    store.dispose_engines()
 
 
 @pytest.fixture

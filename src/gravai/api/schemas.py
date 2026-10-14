@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, Field
+
+from gravai.models.database import RecordingDTO
 
 
 class CaptchaChallenge(BaseModel):
@@ -26,57 +26,10 @@ class CaptchaChallenge(BaseModel):
     updated_at: str
 
 
-class SpeechSegmentOut(BaseModel):
-    """One stretch of the meeting this participant was speaking, in seconds from
-    the start of the meeting."""
+class Recording(RecordingDTO):
+    """A persisted meeting with its duration calculated for the HTTP response."""
 
-    start: float
-    end: float
-
-
-class ParticipantResult(BaseModel):
-    """One speaker's share of a meeting: when they talked and what they said."""
-
-    participant_id: str
-    participant_name: str | None = None
-    track_path: str | None = None
-    speech_track_path: str | None = None
-    segments: list[SpeechSegmentOut] = Field(default_factory=list)
-    transcript_text: str | None = None
-    # Whisper's own segments, timed against the meeting rather than against the
-    # speech-only track they were produced from. Left as whisper shaped them
-    # rather than narrowed to a model of our own, since callers that want the
-    # confidences and the token data want all of it.
-    transcript_segments: list[dict] | None = None
-
-
-class Recording(BaseModel):
-    """A meeting and everything known about it.
-
-    The audio itself is not in here - the paths are, and there are routes that
-    stream them - but the timings, the speaking segments and the transcripts are,
-    because those are what a caller reads rather than downloads.
-    """
-
-    id: str
-    meeting_url: str | None = None
-    provider: str | None = None
-    session_dir: str
-    # recording | processing | complete | failed. A meeting in progress is in
-    # here from the moment it has a directory, which is well before it has audio.
-    status: str
-    started_at: datetime | None = None
-    ended_at: datetime | None = None
     duration_seconds: float | None = None
-    main_track_path: str | None = None
-    # The whole meeting read as one conversation, from the mixed track. Not the
-    # participant transcripts concatenated - overlaps and interruptions are in
-    # place here, and there is no speaker attribution.
-    meeting_transcript_text: str | None = None
-    meeting_transcript_segments: list[dict] | None = None
-    participants: list[ParticipantResult] = Field(default_factory=list)
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
 
 
 class JobLog(BaseModel):

@@ -18,237 +18,230 @@ in one process but separate job processes, each holding a meeting for hours, and
 a connection cached across that is a lock held across it too.
 """
 
-import json
+from __future__ import annotations
+
 import os
-import sqlite3
 import threading
+import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
+from sqlite3 import SQLITE_BUSY, SQLITE_LOCKED
+from sqlite3 import Connection as SQLiteConnection
+from sqlite3 import Cursor as SQLiteCursor
+from sqlite3 import OperationalError as SQLiteOperationalError
+
+from sqlalchemy import (
+    create_engine,
+    delete,
+    event,
+    insert,
+    inspect,
+    literal_column,
+    select,
+    update,
+)
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import URL, Connection, Engine, RowMapping
+from sqlalchemy.pool import ConnectionPoolEntry, NullPool
 
 from gravai.config.logging_config import get_logger
 from gravai.config.settings import get_settings
-from gravai.jobs.models import Job, JobStatus, JobType
+from gravai.jobs.tables import jobs, metadata, recordings
+from gravai.jobs.tables import participants as participants_table
+from gravai.models.database import (
+    Job,
+    JobParamsDTO,
+    JobResultDTO,
+    JobStatus,
+    JobType,
+    JobUpdateDTO,
+    ParticipantDTO,
+    RecordingDTO,
+    RecordingUpsertDTO,
+)
 
 logger = get_logger("jobs.store")
-
-# Long enough to outlast another process finishing a write, short enough that a
-# genuinely stuck database is reported rather than waited on forever.
 _BUSY_TIMEOUT_S = 30.0
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs (
-    id                  TEXT PRIMARY KEY,
-    type                TEXT NOT NULL,
-    status              TEXT NOT NULL,
-    params              TEXT NOT NULL DEFAULT '{}',
-    result              TEXT,
-    error               TEXT,
-    pid                 INTEGER,
-    -- The pid alone does not identify a process across a restart: pids are
-    -- reused, and every row read at startup was written by a process that is
-    -- gone. This is /proc/<pid>/stat's start time, which together with the pid
-    -- is unique for as long as the machine is up.
-    pid_start           INTEGER,
-    recording_id        TEXT,
-    session_dir         TEXT,
-    -- The job that must finish before this one may start. Not a foreign key:
-    -- deleting a finished recording job should not take the transcription it
-    -- led to with it, and by then the dependency is only provenance.
-    depends_on          TEXT,
-    created_at          TEXT NOT NULL,
-    started_at          TEXT,
-    finished_at         TEXT,
-    stop_requested_at   TEXT
-);
-
-CREATE INDEX IF NOT EXISTS jobs_status_idx  ON jobs (status);
-CREATE INDEX IF NOT EXISTS jobs_created_idx ON jobs (created_at DESC);
-
-CREATE TABLE IF NOT EXISTS recordings (
-    id                  TEXT PRIMARY KEY,
-    meeting_url         TEXT,
-    provider            TEXT,
-    session_dir         TEXT NOT NULL UNIQUE,
-    status              TEXT NOT NULL,
-    started_at          TEXT,
-    ended_at            TEXT,
-    main_track_path     TEXT,
-    meeting_transcript_text          TEXT,
-    meeting_transcript_segments      TEXT,
-    created_at          TEXT NOT NULL,
-    updated_at          TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS recordings_created_idx ON recordings (created_at DESC);
-
-CREATE TABLE IF NOT EXISTS participants (
-    recording_id        TEXT NOT NULL,
-    participant_id      TEXT NOT NULL,
-    participant_name    TEXT,
-    track_path          TEXT,
-    speech_track_path   TEXT,
-    segments            TEXT NOT NULL DEFAULT '[]',
-    transcript_text     TEXT,
-    transcript_segments TEXT,
-    PRIMARY KEY (recording_id, participant_id),
-    FOREIGN KEY (recording_id) REFERENCES recordings (id) ON DELETE CASCADE
-);
-"""
-
-#: Columns added to the schema after it first shipped.
-#:
-#: CREATE TABLE IF NOT EXISTS does nothing at all to a table that already
-#: exists, so a database from an earlier version keeps the columns it was
-#: created with and every read of that table then fails on the missing one. New
-#: columns therefore have to be listed here as well as in _SCHEMA: the schema is
-#: what a fresh database gets, and this is what an existing one is brought up to.
-#: They must be nullable, since the rows already in the table have no value for
-#: them.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "jobs": {"pid_start": "INTEGER", "depends_on": "TEXT"},
 }
 
 _init_lock = threading.Lock()
 _initialized_paths: set[str] = set()
+# Only engines and compiled statements are cached. NullPool closes every DBAPI
+# connection on release, and the pid key prevents an inherited engine being used.
+_engines: dict[tuple[int, str], Engine] = {}
+_JOB_ROWID = literal_column("jobs.rowid")
+_RECORDING_ROWID = literal_column("recordings.rowid")
 
 
 def database_path() -> str:
     return os.path.abspath(get_settings().DATABASE_PATH)
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _enable_wal(cursor: SQLiteCursor) -> None:
+    # Switching journal modes can return BUSY immediately despite busy_timeout
+    # when another process is initializing the same file. Retry only lock errors,
+    # outside any transaction, within the same configured timeout budget.
+    deadline = time.monotonic() + _BUSY_TIMEOUT_S
+    while True:
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            return
+        except SQLiteOperationalError as exc:
+            code = getattr(exc, "sqlite_errorcode", None)
+            if code is None or code & 0xFF not in (SQLITE_BUSY, SQLITE_LOCKED):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(0.05, remaining))
+
+
+def _configure_connection(
+    dbapi_connection: SQLiteConnection, _record: ConnectionPoolEntry
+) -> None:
+    # Configure before a transaction starts. Explicit BEGIN also makes reads
+    # and schema changes transactional rather than using sqlite3 legacy mode.
+    dbapi_connection.isolation_level = None
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+        _enable_wal(cursor)
+    finally:
+        cursor.close()
+
+
+def _begin_transaction(connection: Connection) -> None:
+    command = (
+        "BEGIN IMMEDIATE"
+        if connection.get_execution_options().get("sqlite_immediate")
+        else "BEGIN"
+    )
+    connection.exec_driver_sql(command)
+
+
+def _engine_for(path: str) -> Engine:
+    """Called with _init_lock held; each process owns its engine."""
+    key = (os.getpid(), path)
+    engine = _engines.get(key)
+    if engine is None:
+        engine = create_engine(
+            URL.create("sqlite+pysqlite", database=path),
+            connect_args={"timeout": _BUSY_TIMEOUT_S},
+            poolclass=NullPool,
+        )
+        event.listen(engine, "connect", _configure_connection)
+        event.listen(engine, "begin", _begin_transaction)
+        _engines[key] = engine
+    return engine
+
+
+def dispose_engines() -> None:
+    """Release cached engine resources when the API or a test shuts down."""
+    with _init_lock:
+        for engine in _engines.values():
+            engine.dispose()
+        _engines.clear()
+        _initialized_paths.clear()
 
 
 def init_db(path: str | None = None) -> str:
-    """Creates the database and its schema if they are not there yet.
-
-    Idempotent, and cheap enough to call from every connection: a job process is
-    spawned fresh and has never seen the file, so the alternative is a startup
-    hook that a job process does not run.
-    """
-    db_path = path or database_path()
+    """Create the Core schema and upgrade nullable legacy columns in one transaction."""
+    db_path = os.path.abspath(path) if path is not None else database_path()
     with _init_lock:
+        engine = _engine_for(db_path)
         if db_path in _initialized_paths:
             return db_path
-        parent = os.path.dirname(db_path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        conn = sqlite3.connect(db_path, timeout=_BUSY_TIMEOUT_S)
-        try:
-            # WAL is what lets a reader (the API answering a poll) and a writer
-            # (a job reporting progress) touch the file at the same time instead
-            # of one of them getting SQLITE_BUSY.
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            conn.executescript(_SCHEMA)
-            _add_missing_columns(conn)
-            conn.commit()
-        finally:
-            conn.close()
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        # Serialize initialization across worker processes before inspecting
+        # existing tables, so migrations never race to add the same column.
+        with engine.connect().execution_options(sqlite_immediate=True) as connection:
+            with connection.begin():
+                metadata.create_all(connection)
+                _add_missing_columns(connection)
+                # create_all skips indexes on tables that already exist.
+                for table in metadata.sorted_tables:
+                    for index in table.indexes:
+                        index.create(connection, checkfirst=True)
         _initialized_paths.add(db_path)
     return db_path
 
 
-def _add_missing_columns(conn: sqlite3.Connection) -> None:
-    """Brings a database created by an earlier version up to the current schema."""
+def _add_missing_columns(connection: Connection) -> None:
     for table, columns in _ADDED_COLUMNS.items():
-        present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        present = {column["name"] for column in inspect(connection).get_columns(table)}
+        quote = connection.dialect.identifier_preparer.quote
         for column, declaration in columns.items():
             if column in present:
                 continue
             logger.info(f"Adding column {table}.{column} to an existing database")
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+            connection.exec_driver_sql(
+                f"ALTER TABLE {quote(table)} ADD COLUMN {quote(column)} {declaration}"
+            )
 
 
 @contextmanager
-def connect(path: str | None = None) -> Iterator[sqlite3.Connection]:
+def connect(path: str | None = None) -> Iterator[Connection]:
     db_path = init_db(path)
-    conn = sqlite3.connect(db_path, timeout=_BUSY_TIMEOUT_S)
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA foreign_keys=ON")
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    with _init_lock:
+        engine = _engine_for(db_path)
+    with engine.begin() as connection:
+        yield connection
 
 
-def _loads(value: str | None, default: Any) -> Any:
-    if not value:
-        return default
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return default
+def _job_from_row(row: RowMapping) -> Job:
+    return Job.model_validate({**row, "created_at": row["created_at"] or _now()})
 
 
-def _dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
+def _recording_from_row(
+    row: RowMapping, speakers: list[ParticipantDTO]
+) -> RecordingDTO:
+    return RecordingDTO.model_validate({**row, "participants": speakers})
 
 
-def _job_from_row(row: sqlite3.Row) -> Job:
-    return Job(
-        id=row["id"],
-        type=JobType(row["type"]),
-        status=JobStatus(row["status"]),
-        params=_loads(row["params"], {}),
-        result=_loads(row["result"], None),
-        error=row["error"],
-        pid=row["pid"],
-        pid_start=row["pid_start"],
-        recording_id=row["recording_id"],
-        session_dir=row["session_dir"],
-        depends_on=row["depends_on"],
-        created_at=_dt(row["created_at"]) or datetime.now(UTC),
-        started_at=_dt(row["started_at"]),
-        finished_at=_dt(row["finished_at"]),
-        stop_requested_at=_dt(row["stop_requested_at"]),
+def _participant_from_row(row: RowMapping) -> ParticipantDTO:
+    return ParticipantDTO.model_validate(
+        {key: value for key, value in row.items() if key != "recording_id"}
     )
-
-
-# --- jobs ------------------------------------------------------------------
 
 
 def create_job(
     job_id: str,
     job_type: JobType,
-    params: dict,
+    params: JobParamsDTO,
     depends_on: str | None = None,
     status: JobStatus = JobStatus.QUEUED,
 ) -> Job:
-    with connect() as conn:
-        conn.execute(
-            "INSERT INTO jobs (id, type, status, params, depends_on, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                job_id,
-                job_type.value,
-                status.value,
-                json.dumps(params),
-                depends_on,
-                _now(),
-            ),
+    with connect() as connection:
+        connection.execute(
+            insert(jobs).values(
+                id=job_id,
+                type=job_type.value,
+                status=status.value,
+                params=params,
+                depends_on=depends_on,
+                created_at=_now(),
+            )
         )
     job = get_job(job_id)
-    assert job is not None  # just inserted, inside the same database
+    assert job is not None
     return job
 
 
 def get_job(job_id: str) -> Job | None:
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-    return _job_from_row(row) if row else None
+    with connect() as connection:
+        row = (
+            connection.execute(select(jobs).where(jobs.c.id == job_id))
+            .mappings()
+            .first()
+        )
+    return _job_from_row(row) if row is not None else None
 
 
 def list_jobs(
@@ -257,355 +250,304 @@ def list_jobs(
     limit: int = 100,
     offset: int = 0,
 ) -> list[Job]:
-    clauses, args = [], []
+    statement = (
+        select(jobs)
+        .order_by(jobs.c.created_at.desc(), _JOB_ROWID.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     if status is not None:
-        clauses.append("status = ?")
-        args.append(status.value)
+        statement = statement.where(jobs.c.status == status.value)
     if job_type is not None:
-        clauses.append("type = ?")
-        args.append(job_type.value)
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    with connect() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM jobs{where} ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
-            (*args, limit, offset),
-        ).fetchall()
+        statement = statement.where(jobs.c.type == job_type.value)
+    with connect() as connection:
+        rows = connection.execute(statement).mappings().all()
     return [_job_from_row(row) for row in rows]
 
 
 def active_jobs() -> list[Job]:
-    """Every job that has not reached an end, in the order they were asked for.
-
-    Oldest first, unlike list_jobs: the callers are the ones that walk all of
-    them - reconciling after a restart, or refusing a shutdown - not ones showing
-    a page.
-    """
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM jobs WHERE status IN (?, ?, ?, ?) ORDER BY created_at",
-            (
-                JobStatus.QUEUED.value,
-                JobStatus.WAITING.value,
-                JobStatus.RUNNING.value,
-                JobStatus.STOPPING.value,
-            ),
-        ).fetchall()
+    """Every unfinished job, oldest first."""
+    statement = (
+        select(jobs)
+        .where(
+            jobs.c.status.in_(
+                [
+                    JobStatus.QUEUED.value,
+                    JobStatus.WAITING.value,
+                    JobStatus.RUNNING.value,
+                    JobStatus.STOPPING.value,
+                ]
+            )
+        )
+        .order_by(jobs.c.created_at)
+    )
+    with connect() as connection:
+        rows = connection.execute(statement).mappings().all()
     return [_job_from_row(row) for row in rows]
 
 
 def dependents_of(job_id: str) -> list[Job]:
-    """The jobs waiting for this one, oldest first."""
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM jobs WHERE depends_on = ? ORDER BY created_at", (job_id,)
-        ).fetchall()
+    with connect() as connection:
+        rows = (
+            connection.execute(
+                select(jobs)
+                .where(jobs.c.depends_on == job_id)
+                .order_by(jobs.c.created_at)
+            )
+            .mappings()
+            .all()
+        )
     return [_job_from_row(row) for row in rows]
 
 
-def update_job(job_id: str, **fields: Any) -> None:
-    """Writes the given columns of a job, JSON-encoding params and result."""
-    if not fields:
+def update_job(job_id: str, update: JobUpdateDTO) -> None:
+    """Only supplied fields are changed, including explicit nullable clears."""
+    values = update.model_dump(mode="python", exclude_unset=True)
+    if not values:
         return
-    encoded: dict[str, Any] = {}
-    for key, value in fields.items():
-        if key in ("params", "result") and value is not None and not isinstance(value, str):
-            encoded[key] = json.dumps(value, default=str)
-        elif isinstance(value, JobStatus) or isinstance(value, JobType):
-            encoded[key] = value.value
-        elif isinstance(value, datetime):
-            encoded[key] = value.isoformat()
-        else:
-            encoded[key] = value
-
-    assignments = ", ".join(f"{key} = ?" for key in encoded)
-    with connect() as conn:
-        conn.execute(
-            f"UPDATE jobs SET {assignments} WHERE id = ?", (*encoded.values(), job_id)
-        )
+    with connect() as connection:
+        connection.execute(jobs.update().where(jobs.c.id == job_id).values(values))
 
 
 def finish_job(
     job_id: str,
     status: JobStatus,
-    result: dict | None = None,
+    result: JobResultDTO | None = None,
     error: str | None = None,
 ) -> None:
-    """Closes a job out, unless something already did.
-
-    The WHERE clause is what makes a cancel and a job finishing on its own safe
-    to race: a job that was killed a moment after it succeeded keeps the success
-    it actually had, and one that finished after being marked cancelled does not
-    overwrite that.
-    """
-    with connect() as conn:
-        conn.execute(
-            """
-            UPDATE jobs
-               SET status = ?, result = ?, error = ?, finished_at = ?
-             WHERE id = ? AND status NOT IN (?, ?, ?)
-            """,
-            (
-                status.value,
-                json.dumps(result, default=str) if result is not None else None,
-                error,
-                _now(),
-                job_id,
-                JobStatus.SUCCEEDED.value,
-                JobStatus.FAILED.value,
-                JobStatus.CANCELLED.value,
+    # Keep the conditional UPDATE atomic: cancelling cannot overwrite success,
+    # and a worker finishing after cancellation cannot reopen its job.
+    statement = (
+        update(jobs)
+        .where(
+            jobs.c.id == job_id,
+            jobs.c.status.not_in(
+                [
+                    JobStatus.SUCCEEDED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ]
             ),
         )
+        .values(status=status.value, result=result, error=error, finished_at=_now())
+    )
+    with connect() as connection:
+        connection.execute(statement)
 
 
 def mark_started(job_id: str, pid: int, pid_start: int | None = None) -> None:
-    with connect() as conn:
-        conn.execute(
-            """
-            UPDATE jobs SET status = ?, pid = ?, pid_start = ?, started_at = ?
-             WHERE id = ? AND status = ?
-            """,
-            (JobStatus.RUNNING.value, pid, pid_start, _now(), job_id, JobStatus.QUEUED.value),
+    with connect() as connection:
+        connection.execute(
+            update(jobs)
+            .where(
+                jobs.c.id == job_id,
+                jobs.c.status == JobStatus.QUEUED.value,
+            )
+            .values(
+                status=JobStatus.RUNNING.value,
+                pid=pid,
+                pid_start=pid_start,
+                started_at=_now(),
+            )
         )
 
 
 def mark_stop_requested(job_id: str) -> None:
-    """Moves a running job into STOPPING; a job past that point is left alone."""
-    with connect() as conn:
-        conn.execute(
-            "UPDATE jobs SET status = ?, stop_requested_at = ? WHERE id = ? AND status = ?",
-            (JobStatus.STOPPING.value, _now(), job_id, JobStatus.RUNNING.value),
+    with connect() as connection:
+        connection.execute(
+            update(jobs)
+            .where(
+                jobs.c.id == job_id,
+                jobs.c.status == JobStatus.RUNNING.value,
+            )
+            .values(status=JobStatus.STOPPING.value, stop_requested_at=_now())
         )
 
 
 def attach_session(job_id: str, recording_id: str, session_dir: str) -> None:
-    with connect() as conn:
-        conn.execute(
-            "UPDATE jobs SET recording_id = ?, session_dir = ? WHERE id = ?",
-            (recording_id, session_dir, job_id),
+    with connect() as connection:
+        connection.execute(
+            update(jobs)
+            .where(jobs.c.id == job_id)
+            .values(
+                recording_id=recording_id,
+                session_dir=session_dir,
+            )
         )
 
 
 def delete_job(job_id: str) -> bool:
-    with connect() as conn:
-        cursor = conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
-    return cursor.rowcount > 0
+    with connect() as connection:
+        result = connection.execute(delete(jobs).where(jobs.c.id == job_id))
+    return result.rowcount > 0
 
 
-# --- recordings ------------------------------------------------------------
-
-
-def upsert_recording(
-    recording_id: str,
-    session_dir: str,
-    status: str,
-    meeting_url: str | None = None,
-    provider: str | None = None,
-    started_at: datetime | str | None = None,
-    ended_at: datetime | str | None = None,
-    main_track_path: str | None = None,
-    meeting_transcript_text: str | None = None,
-    meeting_transcript_segments: Any = None,
-) -> None:
-    """Creates or updates one meeting's row, leaving unknown fields as they were.
-
-    A recording is written twice: once the moment the recorder has a directory,
-    which is what makes a meeting in progress visible at all, and again when the
-    pipeline is done with it. The second write knows things the first could not,
-    and the first knows the meeting URL, which nothing downstream carries - so
-    each column keeps its old value when the new one is None rather than being
-    blanked by whichever write came last.
-    """
+def upsert_recording(recording: RecordingUpsertDTO) -> None:
+    """One atomic upsert; missing optional values preserve previously known data."""
     now = _now()
-    # Normalized on the way in, because session_dir is the key a transcription
-    # job looks a recording up by and the pipeline builds it from SAVE_DIR, which
-    # is free to be relative. Two spellings of one directory would otherwise be
-    # two meetings.
-    session_dir = os.path.abspath(session_dir)
-    values = {
-        "meeting_url": meeting_url,
-        "provider": provider,
-        "started_at": started_at.isoformat() if isinstance(started_at, datetime) else started_at,
-        "ended_at": ended_at.isoformat() if isinstance(ended_at, datetime) else ended_at,
-        "main_track_path": main_track_path,
-        "meeting_transcript_text": meeting_transcript_text,
-        "meeting_transcript_segments": (
-            json.dumps(meeting_transcript_segments, default=str)
-            if meeting_transcript_segments is not None
-            else None
-        ),
-    }
-    with connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO recordings (id, session_dir, status, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET status = excluded.status,
-                                          updated_at = excluded.updated_at
-            """,
-            (recording_id, session_dir, status, now, now),
-        )
-        for column, value in values.items():
-            if value is None:
-                continue
-            conn.execute(
-                f"UPDATE recordings SET {column} = ?, updated_at = ? WHERE id = ?",
-                (value, now, recording_id),
+    optional = recording.to_json()
+    statement = sqlite_insert(recordings).values(
+        id=recording.recording_id,
+        session_dir=os.path.abspath(recording.session_dir),
+        status=recording.status,
+        created_at=now,
+        updated_at=now,
+        **optional,
+    )
+    statement = statement.on_conflict_do_update(
+        index_elements=[recordings.c.id],
+        set_={
+            "status": statement.excluded.status,
+            "updated_at": statement.excluded.updated_at,
+            **{column: statement.excluded[column] for column in optional},
+        },
+    )
+    with connect() as connection:
+        connection.execute(statement)
+
+
+def replace_participants(
+    recording_id: str, participants: Iterable[ParticipantDTO]
+) -> None:
+    """Delete and batch-insert speakers in one transaction, including an empty set."""
+    with connect() as connection:
+        connection.execute(
+            delete(participants_table).where(
+                participants_table.c.recording_id == recording_id
             )
-
-
-def replace_participants(recording_id: str, participants: Iterable[dict]) -> None:
-    """Rewrites a recording's speakers wholesale.
-
-    Re-slicing the same directory can produce a different set of them - grouping
-    by name rather than by element id merges two tiles of one person into one
-    speaker - so the new set replaces the old rather than being merged into it,
-    which would leave the previous grouping behind as phantom speakers.
-    """
-    with connect() as conn:
-        conn.execute("DELETE FROM participants WHERE recording_id = ?", (recording_id,))
-        conn.executemany(
-            """
-            INSERT INTO participants (
-                recording_id, participant_id, participant_name, track_path,
-                speech_track_path, segments, transcript_text, transcript_segments
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    recording_id,
-                    participant["participant_id"],
-                    participant.get("participant_name"),
-                    participant.get("track_path"),
-                    participant.get("speech_track_path"),
-                    json.dumps(participant.get("segments") or [], default=str),
-                    participant.get("transcript_text"),
-                    json.dumps(participant["transcript_segments"], default=str)
-                    if participant.get("transcript_segments") is not None
-                    else None,
-                )
-                for participant in participants
-            ],
         )
+        values = [
+            {"recording_id": recording_id, **speaker.model_dump(mode="python")}
+            for speaker in participants
+        ]
+        if values:
+            connection.execute(insert(participants_table), values)
 
 
-def _recording_from_row(row: sqlite3.Row, participants: list[dict]) -> dict:
-    return {
-        "id": row["id"],
-        "meeting_url": row["meeting_url"],
-        "provider": row["provider"],
-        "session_dir": row["session_dir"],
-        "status": row["status"],
-        "started_at": _dt(row["started_at"]),
-        "ended_at": _dt(row["ended_at"]),
-        "main_track_path": row["main_track_path"],
-        "meeting_transcript_text": row["meeting_transcript_text"],
-        "meeting_transcript_segments": _loads(row["meeting_transcript_segments"], None),
-        "created_at": _dt(row["created_at"]),
-        "updated_at": _dt(row["updated_at"]),
-        "participants": participants,
-    }
-
-
-def _participant_from_row(row: sqlite3.Row) -> dict:
-    return {
-        "participant_id": row["participant_id"],
-        "participant_name": row["participant_name"],
-        "track_path": row["track_path"],
-        "speech_track_path": row["speech_track_path"],
-        "segments": _loads(row["segments"], []),
-        "transcript_text": row["transcript_text"],
-        "transcript_segments": _loads(row["transcript_segments"], None),
-    }
-
-
-def list_recordings(limit: int = 100, offset: int = 0) -> list[dict]:
-    """Every meeting, newest first, each with its speakers.
-
-    Speakers come along because the only reason to list meetings is to choose
-    one, and who was in it is what that choice is made on. They are fetched in
-    one query rather than one per recording, so a long list stays a constant
-    number of round trips.
-    """
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM recordings ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
+def list_recordings(limit: int = 100, offset: int = 0) -> list[RecordingDTO]:
+    """Read recordings and their speakers in two queries, never one per recording."""
+    with connect() as connection:
+        rows = (
+            connection.execute(
+                select(recordings)
+                .order_by(
+                    recordings.c.created_at.desc(),
+                    _RECORDING_ROWID.desc(),
+                )
+                .limit(limit)
+                .offset(offset)
+            )
+            .mappings()
+            .all()
+        )
         if not rows:
             return []
         ids = [row["id"] for row in rows]
-        placeholders = ",".join("?" for _ in ids)
-        participant_rows = conn.execute(
-            f"SELECT * FROM participants WHERE recording_id IN ({placeholders}) "
-            f"ORDER BY participant_name, participant_id",
-            ids,
-        ).fetchall()
-
-    by_recording: dict[str, list[dict]] = {recording_id: [] for recording_id in ids}
-    for row in participant_rows:
+        speakers = (
+            connection.execute(
+                select(participants_table)
+                .where(
+                    participants_table.c.recording_id.in_(ids),
+                )
+                .order_by(
+                    participants_table.c.participant_name,
+                    participants_table.c.participant_id,
+                )
+            )
+            .mappings()
+            .all()
+        )
+    by_recording: dict[str, list[ParticipantDTO]] = {
+        recording_id: [] for recording_id in ids
+    }
+    for row in speakers:
         by_recording[row["recording_id"]].append(_participant_from_row(row))
     return [_recording_from_row(row, by_recording[row["id"]]) for row in rows]
 
 
-def get_recording(recording_id: str) -> dict | None:
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM recordings WHERE id = ?", (recording_id,)).fetchone()
+def get_recording(recording_id: str) -> RecordingDTO | None:
+    with connect() as connection:
+        row = (
+            connection.execute(
+                select(recordings).where(recordings.c.id == recording_id)
+            )
+            .mappings()
+            .first()
+        )
         if row is None:
             return None
-        participant_rows = conn.execute(
-            "SELECT * FROM participants WHERE recording_id = ? "
-            "ORDER BY participant_name, participant_id",
-            (recording_id,),
-        ).fetchall()
-    return _recording_from_row(row, [_participant_from_row(r) for r in participant_rows])
+        speakers = (
+            connection.execute(
+                select(participants_table)
+                .where(
+                    participants_table.c.recording_id == recording_id,
+                )
+                .order_by(
+                    participants_table.c.participant_name,
+                    participants_table.c.participant_id,
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return _recording_from_row(
+        row, [_participant_from_row(speaker) for speaker in speakers]
+    )
 
 
-def get_recording_by_session_dir(session_dir: str) -> dict | None:
-    """The meeting recorded into a directory, when one is already catalogued.
-
-    A transcription job is given a directory and nothing else, so this is how it
-    finds the meeting URL and the provider that produced it - neither of which is
-    recoverable from the files - and files its results under the same recording
-    instead of a second one.
-    """
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT id FROM recordings WHERE session_dir = ?", (os.path.abspath(session_dir),)
-        ).fetchone()
-    return get_recording(row["id"]) if row else None
+def get_recording_by_session_dir(session_dir: str) -> RecordingDTO | None:
+    with connect() as connection:
+        recording_id = connection.execute(
+            select(recordings.c.id).where(
+                recordings.c.session_dir == os.path.abspath(session_dir),
+            )
+        ).scalar_one_or_none()
+    return get_recording(recording_id) if recording_id is not None else None
 
 
 def jobs_for_recording(recording_id: str) -> list[Job]:
-    with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM jobs WHERE recording_id = ? ORDER BY created_at",
-            (recording_id,),
-        ).fetchall()
+    with connect() as connection:
+        rows = (
+            connection.execute(
+                select(jobs)
+                .where(
+                    jobs.c.recording_id == recording_id,
+                )
+                .order_by(jobs.c.created_at)
+            )
+            .mappings()
+            .all()
+        )
     return [_job_from_row(row) for row in rows]
 
 
 def delete_recording(recording_id: str) -> bool:
-    """Forgets a meeting. Its audio on disk is not touched.
-
-    Deleting the files is deliberately not part of this: a row is cheap to
-    recreate by re-slicing the directory, and hours of meeting audio removed by
-    a catalogue call is not something to do as a side effect.
-    """
-    with connect() as conn:
-        cursor = conn.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
-    return cursor.rowcount > 0
+    """Forget the recording and cascade speakers, leaving files alone."""
+    with connect() as connection:
+        result = connection.execute(
+            delete(recordings).where(recordings.c.id == recording_id)
+        )
+    return result.rowcount > 0
 
 
 def delete_transcripts(recording_id: str) -> bool:
-    """Clear meeting and speaker transcripts while keeping audio and timings."""
-    with connect() as conn:
-        cursor = conn.execute(
-            "UPDATE recordings SET meeting_transcript_text = NULL, "
-            "meeting_transcript_segments = NULL, updated_at = ? WHERE id = ?",
-            (datetime.now(UTC).isoformat(), recording_id),
+    with connect() as connection:
+        result = connection.execute(
+            update(recordings)
+            .where(
+                recordings.c.id == recording_id,
+            )
+            .values(
+                meeting_transcript_text=None,
+                meeting_transcript_segments=None,
+                updated_at=_now(),
+            )
         )
-        conn.execute(
-            "UPDATE participants SET transcript_text = NULL, transcript_segments = NULL "
-            "WHERE recording_id = ?", (recording_id,),
+        connection.execute(
+            update(participants_table)
+            .where(
+                participants_table.c.recording_id == recording_id,
+            )
+            .values(transcript_text=None, transcript_segments=None)
         )
-    return cursor.rowcount > 0
+    return result.rowcount > 0

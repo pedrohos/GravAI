@@ -9,15 +9,28 @@ This is the one place that opens those files and puts what is in them into the
 catalogue, so that reading a meeting back is a single query.
 """
 
-import json
+from __future__ import annotations
+
 import os
-from typing import Any
+
+from pydantic import TypeAdapter, ValidationError
 
 from gravai.config.logging_config import get_logger
 from gravai.jobs import store
-from gravai.models.common import Session, TranscriptedSession
+from gravai.models.common import (
+    ParticipantDataT,
+    ParticipantDataTransc,
+    Session,
+    TranscriptedSession,
+)
+from gravai.models.database import (
+    ParticipantDTO,
+    RecordingUpsertDTO,
+    TranscriptSegmentDTO,
+)
 
 logger = get_logger("jobs.catalogue")
+_TRANSCRIPT_SEGMENTS = TypeAdapter(list[TranscriptSegmentDTO])
 
 #: A recording that is in progress: the browser is in the meeting.
 STATUS_RECORDING = "recording"
@@ -40,13 +53,13 @@ def _read_text(path: str | None) -> str | None:
         return None
 
 
-def _read_json(path: str | None) -> Any:
+def _read_json(path: str | None) -> list[TranscriptSegmentDTO] | None:
     if not path or not os.path.exists(path):
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
+            return _TRANSCRIPT_SEGMENTS.validate_json(f.read())
+    except (OSError, ValidationError) as exc:
         logger.warning(f"Could not read transcript segments {path}: {exc}")
         return None
 
@@ -65,16 +78,18 @@ def register_recording(
     Session exists, neither is part of it.
     """
     store.upsert_recording(
-        recording_id=recording_id,
-        session_dir=session_dir,
-        status=status,
-        meeting_url=meeting_url,
-        provider=provider,
+        RecordingUpsertDTO(
+            recording_id=recording_id,
+            session_dir=session_dir,
+            status=status,
+            meeting_url=meeting_url,
+            provider=provider,
+        )
     )
 
 
 def save_session(
-    session: Session | TranscriptedSession,
+    session: Session[ParticipantDataT],
     session_dir: str,
     meeting_url: str | None = None,
     provider: str | None = None,
@@ -86,47 +101,59 @@ def save_session(
     the transcript columns simply stay empty for the former, which is exactly
     what a recording job with slicing on produces.
     """
-    transcripts = getattr(session, "tracks", {})
-    participants = []
-    for participant_id, participant in transcripts.items():
-        transcription = getattr(participant, "transcription", None)
+    participants: list[ParticipantDTO] = []
+    for participant_id, participant in session.tracks.items():
+        transcription = (
+            participant.transcription
+            if isinstance(participant, ParticipantDataTransc)
+            else None
+        )
         participants.append(
-            {
-                "participant_id": participant_id,
-                "participant_name": participant.participant_name,
-                "track_path": participant.track.wav_file_path,
-                "speech_track_path": participant.track.speech_wav_file_path,
-                "segments": [
-                    {"start": segment.start, "end": segment.end}
-                    for segment in participant.track.speech_segments
-                ],
-                "transcript_text": _read_text(
-                    transcription.transcription_text_file_path if transcription else None
+            ParticipantDTO(
+                participant_id=participant_id,
+                participant_name=participant.participant_name,
+                track_path=participant.track.wav_file_path,
+                speech_track_path=participant.track.speech_wav_file_path,
+                segments=participant.track.speech_segments,
+                transcript_text=_read_text(
+                    transcription.transcription_text_file_path
+                    if transcription
+                    else None
                 ),
-                "transcript_segments": _read_json(
-                    transcription.transcription_segments_file_path if transcription else None
+                transcript_segments=_read_json(
+                    transcription.transcription_segments_file_path
+                    if transcription
+                    else None
                 ),
-            }
+            )
         )
 
-    meeting_transcription = getattr(session, "meeting_transcription", None)
+    meeting_transcription = (
+        session.meeting_transcription
+        if isinstance(session, TranscriptedSession)
+        else None
+    )
     store.upsert_recording(
-        recording_id=session.session_id,
-        session_dir=session_dir,
-        status=status,
-        meeting_url=meeting_url,
-        provider=provider,
-        started_at=session.session_start,
-        ended_at=session.session_end,
-        main_track_path=session.main_track_path,
-        meeting_transcript_text=_read_text(
-            meeting_transcription.transcription_text_file_path if meeting_transcription else None
-        ),
-        meeting_transcript_segments=_read_json(
-            meeting_transcription.transcription_segments_file_path
-            if meeting_transcription
-            else None
-        ),
+        RecordingUpsertDTO(
+            recording_id=session.session_id,
+            session_dir=session_dir,
+            status=status,
+            meeting_url=meeting_url,
+            provider=provider,
+            started_at=session.session_start,
+            ended_at=session.session_end,
+            main_track_path=session.main_track_path,
+            meeting_transcript_text=_read_text(
+                meeting_transcription.transcription_text_file_path
+                if meeting_transcription
+                else None
+            ),
+            meeting_transcript_segments=_read_json(
+                meeting_transcription.transcription_segments_file_path
+                if meeting_transcription
+                else None
+            ),
+        )
     )
     store.replace_participants(session.session_id, participants)
     logger.info(

@@ -16,6 +16,7 @@ from gravai.api import pipeline
 from gravai.jobs import runner, store
 from gravai.jobs.models import JobSubmission, JobType
 from gravai.models.common import ParticipantData, Session, SpeechSegment, Track
+from gravai.models.database import JobParamsDTO, RecordingUpsertDTO
 
 
 class WhisperIsDown(RuntimeError):
@@ -65,7 +66,9 @@ def whisper_is_down(monkeypatch, tmp_path):
     return session
 
 
-def test_the_hook_runs_before_transcription_rather_than_after(whisper_is_down, tmp_path):
+def test_the_hook_runs_before_transcription_rather_than_after(
+    whisper_is_down, tmp_path
+):
     """Ordering is the whole point: after a failure there is no 'after'."""
     seen = []
 
@@ -82,7 +85,9 @@ def test_a_failed_transcription_still_leaves_the_tracks_in_the_catalogue(
     database, whisper_is_down, tmp_path
 ):
     job = store.create_job(
-        "job-1", JobType.TRANSCRIBE, {"tracks_output_dir": str(tmp_path)}
+        "job-1",
+        JobType.TRANSCRIBE,
+        JobParamsDTO.model_validate({"tracks_output_dir": str(tmp_path)}),
     )
 
     with pytest.raises(WhisperIsDown):
@@ -90,16 +95,18 @@ def test_a_failed_transcription_still_leaves_the_tracks_in_the_catalogue(
 
     recording = store.get_recording("session-1")
     assert recording is not None, "the meeting was never catalogued at all"
-    assert recording["main_track_path"], "the whole-meeting track is missing"
+    assert recording.main_track_path, "the whole-meeting track is missing"
 
-    participants = recording["participants"]
-    assert [p["participant_name"] for p in participants] == ["Ana"]
-    assert participants[0]["track_path"], "the speaker's aligned track is missing"
-    assert participants[0]["speech_track_path"], "the speaker's speech track is missing"
-    assert participants[0]["segments"] == [{"start": 1.0, "end": 4.5}]
+    participants = recording.participants
+    assert [p.participant_name for p in participants] == ["Ana"]
+    assert participants[0].track_path, "the speaker's aligned track is missing"
+    assert participants[0].speech_track_path, "the speaker's speech track is missing"
+    assert [(segment.start, segment.end) for segment in participants[0].segments] == [
+        (1.0, 4.5)
+    ]
     # The half that genuinely did not happen stays empty rather than being faked.
-    assert participants[0]["transcript_text"] is None
-    assert recording["meeting_transcript_text"] is None
+    assert participants[0].transcript_text is None
+    assert recording.meeting_transcript_text is None
 
 
 def test_the_recording_is_linked_to_the_job_that_was_transcribing_it(
@@ -108,7 +115,9 @@ def test_the_recording_is_linked_to_the_job_that_was_transcribing_it(
     """Without the link, the failure has no row to mark and the meeting is
     left claiming to be processing for good."""
     job = store.create_job(
-        "job-2", JobType.TRANSCRIBE, {"tracks_output_dir": str(tmp_path)}
+        "job-2",
+        JobType.TRANSCRIBE,
+        JobParamsDTO.model_validate({"tracks_output_dir": str(tmp_path)}),
     )
 
     with pytest.raises(WhisperIsDown):
@@ -117,21 +126,25 @@ def test_the_recording_is_linked_to_the_job_that_was_transcribing_it(
     assert store.get_job("job-2").recording_id == "session-1"
 
 
-def test_a_recording_can_be_transcribed_again_from_its_own_directory(database, tmp_path):
+def test_a_recording_can_be_transcribed_again_from_its_own_directory(
+    database, tmp_path
+):
     """Re-transcribing is a transcribe job over a directory that already has a
     recording in the catalogue, so it has to be accepted rather than refused as
     a duplicate."""
     (tmp_path / "track_mainAudio-1.wav").write_bytes(b"")
     store.upsert_recording(
-        recording_id="session-1",
-        session_dir=str(tmp_path),
-        status="complete",
-        meeting_url="https://meet.google.com/abc-defg-hij",
-        provider="meet",
+        RecordingUpsertDTO(
+            recording_id="session-1",
+            session_dir=str(tmp_path),
+            status="complete",
+            meeting_url="https://meet.google.com/abc-defg-hij",
+            provider="meet",
+        )
     )
 
     params = runner._validate(
         JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path))
     )
 
-    assert params["tracks_output_dir"] == str(tmp_path)
+    assert params.tracks_output_dir == str(tmp_path)

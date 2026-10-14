@@ -20,6 +20,7 @@ import pytest
 
 from gravai.jobs import runner, store
 from gravai.jobs.models import Job, JobStatus, JobSubmission, JobType
+from gravai.models.database import JobParamsDTO, JobResultDTO, JobUpdateDTO
 
 MEETING_URL = "https://teams.microsoft.com/l/meetup-join/whatever"
 
@@ -96,21 +97,27 @@ def test_a_record_and_transcribe_becomes_two_jobs(database, no_spawning):
     assert transcribe.status is JobStatus.WAITING
 
 
-def test_the_recording_half_does_not_slice_what_the_transcription_will(database, no_spawning):
+def test_the_recording_half_does_not_slice_what_the_transcription_will(
+    database, no_spawning
+):
     """Slicing runs again inside the transcription, so doing it twice is waste."""
-    runner.submit(JobSubmission(type=JobType.RECORD_AND_TRANSCRIBE, meeting_url=MEETING_URL))
+    runner.submit(
+        JobSubmission(type=JobType.RECORD_AND_TRANSCRIBE, meeting_url=MEETING_URL)
+    )
     record, transcribe = _pair()
 
-    assert record.params["meeting_url"] == MEETING_URL
-    assert record.params["slice_tracks"] is False
+    assert record.params.meeting_url == MEETING_URL
+    assert record.params.slice_tracks is False
     # The transcription carries no directory, because there is none to carry
     # until the recorder has named one on its way into the meeting.
-    assert "tracks_output_dir" not in transcribe.params
-    assert transcribe.params["group_slices_by_name"] is True
+    assert transcribe.params.tracks_output_dir is None
+    assert transcribe.params.group_slices_by_name is True
 
 
 def test_a_plain_record_job_is_still_one_job(database, no_spawning):
-    returned = runner.submit(JobSubmission(type=JobType.RECORD, meeting_url=MEETING_URL))
+    returned = runner.submit(
+        JobSubmission(type=JobType.RECORD, meeting_url=MEETING_URL)
+    )
 
     jobs = store.list_jobs()
     assert [job.type for job in jobs] == [JobType.RECORD]
@@ -119,7 +126,9 @@ def test_a_plain_record_job_is_still_one_job(database, no_spawning):
 
 
 def test_a_plain_transcribe_job_is_still_one_job(database, no_spawning, tmp_path):
-    runner.submit(JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path)))
+    runner.submit(
+        JobSubmission(type=JobType.TRANSCRIBE, tracks_output_dir=str(tmp_path))
+    )
 
     jobs = store.list_jobs()
     assert [job.type for job in jobs] == [JobType.TRANSCRIBE]
@@ -131,13 +140,17 @@ def test_a_plain_transcribe_job_is_still_one_job(database, no_spawning, tmp_path
 
 
 def _recording_row(job_id: str, status: JobStatus, **fields) -> Job:
-    store.create_job(job_id, JobType.RECORD, {"meeting_url": MEETING_URL})
+    store.create_job(
+        job_id,
+        JobType.RECORD,
+        JobParamsDTO.model_validate({"meeting_url": MEETING_URL}),
+    )
     if fields:
-        store.update_job(job_id, **fields)
+        store.update_job(job_id, JobUpdateDTO(**fields))
     if status.is_terminal:
-        store.finish_job(job_id, status, result=fields.get("result"))
+        store.finish_job(job_id, status, result=JobUpdateDTO(**fields).result)
     else:
-        store.update_job(job_id, status=status)
+        store.update_job(job_id, JobUpdateDTO(status=status))
     return store.get_job(job_id)
 
 
@@ -145,7 +158,7 @@ def _waiting_transcription(depends_on: str) -> Job:
     """A real transcription process, waiting on a recording that is only a row."""
     return runner._start(
         JobType.TRANSCRIBE,
-        {"group_slices_by_name": True},
+        JobParamsDTO.model_validate({"group_slices_by_name": True}),
         depends_on=depends_on,
         status=JobStatus.WAITING,
     )
@@ -174,8 +187,12 @@ def test_it_starts_once_the_recording_succeeds(database, tmp_path):
     transcribe = _waiting_transcription("rec")
     _wait_for(transcribe.id, lambda j: j.status is JobStatus.WAITING)
 
-    store.update_job("rec", session_dir=str(tmp_path))
-    store.finish_job("rec", JobStatus.SUCCEEDED, result={"recording_path": str(tmp_path)})
+    store.update_job("rec", JobUpdateDTO(session_dir=str(tmp_path)))
+    store.finish_job(
+        "rec",
+        JobStatus.SUCCEEDED,
+        result=JobResultDTO.model_validate({"recording_path": str(tmp_path)}),
+    )
 
     # An empty directory, so it fails the instant it reads one - which is all
     # this needs to show that it started and looked in the right place.
@@ -245,7 +262,9 @@ def test_reconcile_leaves_a_waiting_job_with_a_live_process_alone(database):
 
 def test_the_directory_comes_from_the_recording_that_ran(database, tmp_path):
     _recording_row("rec", JobStatus.SUCCEEDED, session_dir=str(tmp_path))
-    job = store.create_job("t", JobType.TRANSCRIBE, {}, depends_on="rec")
+    job = store.create_job(
+        "t", JobType.TRANSCRIBE, JobParamsDTO.model_validate({}), depends_on="rec"
+    )
 
     assert runner._recorded_directory(job) == str(tmp_path)
 
@@ -253,17 +272,25 @@ def test_the_directory_comes_from_the_recording_that_ran(database, tmp_path):
 def test_the_directory_falls_back_to_the_recordings_result(database, tmp_path):
     """session_dir is written by the recorder's own hook; a job that somehow got
     to a result without it still says where it wrote."""
-    store.create_job("rec", JobType.RECORD, {})
-    store.finish_job("rec", JobStatus.SUCCEEDED, result={"recording_path": str(tmp_path)})
-    job = store.create_job("t", JobType.TRANSCRIBE, {}, depends_on="rec")
+    store.create_job("rec", JobType.RECORD, JobParamsDTO.model_validate({}))
+    store.finish_job(
+        "rec",
+        JobStatus.SUCCEEDED,
+        result=JobResultDTO.model_validate({"recording_path": str(tmp_path)}),
+    )
+    job = store.create_job(
+        "t", JobType.TRANSCRIBE, JobParamsDTO.model_validate({}), depends_on="rec"
+    )
 
     assert runner._recorded_directory(job) == str(tmp_path)
 
 
 def test_a_recording_that_left_no_directory_is_refused_clearly(database):
-    store.create_job("rec", JobType.RECORD, {})
-    store.finish_job("rec", JobStatus.SUCCEEDED, result={})
-    job = store.create_job("t", JobType.TRANSCRIBE, {}, depends_on="rec")
+    store.create_job("rec", JobType.RECORD, JobParamsDTO.model_validate({}))
+    store.finish_job("rec", JobStatus.SUCCEEDED, result=JobResultDTO.model_validate({}))
+    job = store.create_job(
+        "t", JobType.TRANSCRIBE, JobParamsDTO.model_validate({}), depends_on="rec"
+    )
 
     with pytest.raises(runner.JobError) as caught:
         runner._recorded_directory(job)

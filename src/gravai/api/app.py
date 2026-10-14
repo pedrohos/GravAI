@@ -36,7 +36,10 @@ async def lifespan(app: FastAPI):
     # restart leaves the ones that are still going alone. The ones whose process
     # died with the last one would otherwise claim to be running for good.
     runner.reconcile()
-    yield
+    try:
+        yield
+    finally:
+        store.dispose_engines()
 
 
 app = FastAPI(

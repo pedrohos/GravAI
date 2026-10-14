@@ -22,19 +22,25 @@ Two ways out are offered, and they are not the same thing:
   is stuck or unwanted, not for ending a meeting early.
 """
 
+from __future__ import annotations
+
 import multiprocessing as mp
 import os
 import signal
 import time
-
-from typing import Any
 from uuid import uuid4
 
 from gravai.api import pipeline
 from gravai.config.logging_config import get_logger
 from gravai.jobs import catalogue, stop_signal, store
 from gravai.jobs.models import Job, JobStatus, JobSubmission, JobType
-from gravai.models.common import RecordingType
+from gravai.models.common import ParticipantData, RecordingType, Session
+from gravai.models.database import (
+    JobParamsDTO,
+    JobResultDTO,
+    JobUpdateDTO,
+    RecordingUpsertDTO,
+)
 
 logger = get_logger("jobs.runner")
 
@@ -48,6 +54,7 @@ _TERM_POLL_INTERVAL_S = 0.25
 # wait is measured in the length of a meeting, so a second between reads is
 # already far finer than it needs to be and costs one small query.
 _DEPENDENCY_POLL_INTERVAL_S = 1.0
+
 
 class JobError(Exception):
     """A job request that cannot be carried out as asked."""
@@ -141,39 +148,30 @@ def _process_alive(pid: int | None, pid_start: int | None = None) -> bool:
 # --- submitting ------------------------------------------------------------
 
 
-def _validate(submission: JobSubmission) -> dict:
-    """Turns a request into the parameters a job runs on, or refuses it.
-
-    Refusing here rather than in the job process is what lets a caller find out
-    that a URL is not a meeting, or a directory does not exist, in the response
-    to their submission - the alternative is a job row that exists only to report
-    a mistake made before it started.
-    """
-    params: dict[str, Any] = {}
+def _validate(submission: JobSubmission) -> JobParamsDTO:
+    """Validate the combination before creating a database row or process."""
     if submission.type in (JobType.RECORD, JobType.RECORD_AND_TRANSCRIBE):
         if not submission.meeting_url:
             raise JobError(f"A {submission.type.value} job needs a meeting_url.")
-        # Raises UnsupportedMeetingURL for a URL no provider claims, and
-        # NotImplementedError for a provider that is registered but not built -
-        # both of which the routes already map onto status codes.
         recording_type = pipeline.detect_recording_type(submission.meeting_url)
-        params["meeting_url"] = submission.meeting_url
-        params["provider"] = recording_type.value
-        if submission.type is JobType.RECORD:
-            params["slice_tracks"] = submission.slice_tracks
-        else:
-            # The transcription that follows slices the directory itself, so
-            # slicing here would only be thrown away and done again.
-            params["slice_tracks"] = False
-            params["group_slices_by_name"] = submission.group_slices_by_name
-    else:
-        if not submission.tracks_output_dir:
-            raise JobError("A transcribe job needs tracks_output_dir.")
-        if not os.path.isdir(submission.tracks_output_dir):
-            raise JobError(f"No such recording directory: {submission.tracks_output_dir}")
-        params["tracks_output_dir"] = submission.tracks_output_dir
-        params["group_slices_by_name"] = submission.group_slices_by_name
-    return params
+        params = JobParamsDTO(
+            meeting_url=submission.meeting_url,
+            provider=recording_type.value,
+            slice_tracks=submission.slice_tracks
+            if submission.type is JobType.RECORD
+            else False,
+        )
+        if submission.type is JobType.RECORD_AND_TRANSCRIBE:
+            params.group_slices_by_name = submission.group_slices_by_name
+        return params
+    if not submission.tracks_output_dir:
+        raise JobError("A transcribe job needs tracks_output_dir.")
+    if not os.path.isdir(submission.tracks_output_dir):
+        raise JobError(f"No such recording directory: {submission.tracks_output_dir}")
+    return JobParamsDTO(
+        tracks_output_dir=submission.tracks_output_dir,
+        group_slices_by_name=submission.group_slices_by_name,
+    )
 
 
 def submit(submission: JobSubmission) -> Job:
@@ -199,11 +197,15 @@ def submit(submission: JobSubmission) -> Job:
 
     record = _start(
         JobType.RECORD,
-        {key: value for key, value in params.items() if key != "group_slices_by_name"},
+        JobParamsDTO(
+            meeting_url=params.meeting_url,
+            provider=params.provider,
+            slice_tracks=params.slice_tracks,
+        ),
     )
     _start(
         JobType.TRANSCRIBE,
-        {"group_slices_by_name": params.get("group_slices_by_name", True)},
+        JobParamsDTO(group_slices_by_name=params.group_slices_by_name),
         depends_on=record.id,
         status=JobStatus.WAITING,
     )
@@ -212,25 +214,39 @@ def submit(submission: JobSubmission) -> Job:
 
 def _start(
     job_type: JobType,
-    params: dict,
+    params: JobParamsDTO,
     depends_on: str | None = None,
     status: JobStatus = JobStatus.QUEUED,
 ) -> Job:
     """Creates one job row and the process that runs it."""
     job_id = str(uuid4())
-    job = store.create_job(job_id, job_type, params, depends_on=depends_on, status=status)
+    job = store.create_job(
+        job_id, job_type, params, depends_on=depends_on, status=status
+    )
 
     context = mp.get_context("spawn")
-    process = context.Process(target=_run_job, args=(job_id,), name=f"gravai-job-{job_id[:8]}")
+    process = context.Process(
+        target=_run_job, args=(job_id,), name=f"gravai-job-{job_id[:8]}"
+    )
     process.start()
     _children[job_id] = process
     # Written by the parent as well as by the job itself: a job that dies in its
     # first instants never gets to record its own pid, and without one nothing
     # can tell that row apart from a job that was never started.
-    store.update_job(job_id, pid=process.pid, pid_start=process_start_ticks(process.pid))
+    store.update_job(
+        job_id,
+        JobUpdateDTO(
+            pid=process.pid,
+            pid_start=process_start_ticks(process.pid)
+            if process.pid is not None
+            else None,
+        ),
+    )
 
     waiting_on = f" waiting on {depends_on}" if depends_on else ""
-    logger.info(f"Submitted {job_type.value} job {job_id} as pid {process.pid}{waiting_on}")
+    logger.info(
+        f"Submitted {job_type.value} job {job_id} as pid {process.pid}{waiting_on}"
+    )
     return job.model_copy(update={"pid": process.pid})
 
 
@@ -258,7 +274,9 @@ def _run_job(job_id: str) -> None:
         # a meeting this row is `waiting` rather than `running`, and without a
         # live pid on it a restart's reconcile would read it as a job whose
         # process died and fail it.
-        store.update_job(job_id, pid=own_pid, pid_start=process_start_ticks(own_pid))
+        store.update_job(
+            job_id, JobUpdateDTO(pid=own_pid, pid_start=process_start_ticks(own_pid))
+        )
         try:
             _await_dependency(job)
         except _Cancelled:
@@ -336,13 +354,17 @@ def _mark_recording_failed(job_id: str) -> None:
     if job is None or not job.recording_id or not job.session_dir:
         return
     store.upsert_recording(
-        recording_id=job.recording_id,
-        session_dir=job.session_dir,
-        status=catalogue.STATUS_FAILED,
+        RecordingUpsertDTO(
+            recording_id=job.recording_id,
+            session_dir=job.session_dir,
+            status=catalogue.STATUS_FAILED,
+        )
     )
 
 
-def _sliced_hook(job_id: str, session_dir: str, meeting_url: str | None, provider: str | None):
+def _sliced_hook(
+    job_id: str, session_dir: str, meeting_url: str | None, provider: str | None
+):
     """Callback that catalogues a recording the moment slicing is done with it.
 
     Transcription is the one stage of this pipeline that fails for reasons that
@@ -374,7 +396,9 @@ def _sliced_hook(job_id: str, session_dir: str, meeting_url: str | None, provide
     return on_sliced
 
 
-def _session_hook(job_id: str, meeting_url: str | None, provider: str | None):
+def _session_hook(
+    job_id: str, meeting_url: str | None, provider: str | None
+):
     """Callback the recorder runs as soon as it has a session directory.
 
     This is the only moment at which the job, the meeting and the directory are
@@ -392,12 +416,14 @@ def _session_hook(job_id: str, meeting_url: str | None, provider: str | None):
             provider=provider,
             status=catalogue.STATUS_RECORDING,
         )
-        logger.info(f"Job {job_id} is recording session {session_id} into {session_dir}")
+        logger.info(
+            f"Job {job_id} is recording session {session_id} into {session_dir}"
+        )
 
     return on_session_start
 
 
-def _dispatch(job: Job) -> dict:
+def _dispatch(job: Job) -> JobResultDTO:
     params = job.params
     if job.type is JobType.RECORD:
         return _run_record(job, params)
@@ -412,12 +438,14 @@ def _dispatch(job: Job) -> dict:
     return _run_transcribe(job, params)
 
 
-def _run_record(job: Job, params: dict) -> dict:
-    meeting_url = params["meeting_url"]
-    provider = params.get("provider")
+def _run_record(job: Job, params: JobParamsDTO) -> JobResultDTO:
+    meeting_url = params.meeting_url
+    if not meeting_url:
+        raise JobError(f"Recording job {job.id} has no meeting_url.")
+    provider = params.provider
     tracks_output_dir, metadata_path, session = pipeline.record(
         meeting_url,
-        slice_tracks=params.get("slice_tracks", True),
+        slice_tracks=params.slice_tracks,
         on_session_start=_session_hook(job.id, meeting_url, provider),
     )
 
@@ -435,21 +463,21 @@ def _run_record(job: Job, params: dict) -> dict:
         # mean the meeting reads as finished with no speakers for as long as
         # whisper takes - and then changes its mind.
         store.upsert_recording(
-            recording_id=job.recording_id,
-            session_dir=tracks_output_dir,
-            status=(
-                catalogue.STATUS_PROCESSING
+            RecordingUpsertDTO(
+                recording_id=job.recording_id,
+                session_dir=tracks_output_dir,
+                status=catalogue.STATUS_PROCESSING
                 if store.dependents_of(job.id)
-                else catalogue.STATUS_COMPLETE
-            ),
+                else catalogue.STATUS_COMPLETE,
+            )
         )
 
-    return {
-        "recording_path": tracks_output_dir,
-        "session_metadata_path": metadata_path,
-        "recording_id": job.recording_id,
-        "session": session.model_dump(mode="json") if session is not None else None,
-    }
+    return JobResultDTO(
+        recording_path=tracks_output_dir,
+        session_metadata_path=metadata_path,
+        recording_id=job.recording_id,
+        session=session,
+    )
 
 
 def _recorded_directory(job: Job) -> str:
@@ -464,7 +492,9 @@ def _recorded_directory(job: Job) -> str:
     dependency = store.get_job(job.depends_on) if job.depends_on else None
     if dependency is None:
         raise JobError(f"Job {job.id} has no recording to transcribe.")
-    directory = dependency.session_dir or (dependency.result or {}).get("recording_path")
+    directory = dependency.session_dir or (
+        dependency.result.recording_path if dependency.result is not None else None
+    )
     if not directory:
         raise JobError(
             f"The recording job {dependency.id} finished without a directory, so there is "
@@ -473,29 +503,31 @@ def _recorded_directory(job: Job) -> str:
     return directory
 
 
-def _run_transcribe(job: Job, params: dict) -> dict:
-    tracks_output_dir = params.get("tracks_output_dir") or _recorded_directory(job)
+def _run_transcribe(job: Job, params: JobParamsDTO) -> JobResultDTO:
+    tracks_output_dir = params.tracks_output_dir or _recorded_directory(job)
 
     # A directory that has been recorded before is already a meeting in the
     # catalogue, and it is the only thing that still knows which provider it came
     # from and what URL it was - neither survives into the files on disk.
     existing = store.get_recording_by_session_dir(tracks_output_dir)
-    meeting_url = existing.get("meeting_url") if existing else None
-    provider = existing.get("provider") if existing else None
+    meeting_url = existing.meeting_url if existing else None
+    provider = existing.provider if existing else None
     recording_type = RecordingType(provider) if provider else RecordingType.TEAMS
 
     if existing:
-        store.attach_session(job.id, existing["id"], tracks_output_dir)
+        store.attach_session(job.id, existing.id, tracks_output_dir)
         store.upsert_recording(
-            recording_id=existing["id"],
-            session_dir=tracks_output_dir,
-            status=catalogue.STATUS_PROCESSING,
+            RecordingUpsertDTO(
+                recording_id=existing.id,
+                session_dir=tracks_output_dir,
+                status=catalogue.STATUS_PROCESSING,
+            )
         )
 
     metadata_path, transcribed = pipeline.transcribe_tracks(
         tracks_output_dir,
         recording_type=recording_type,
-        group_slices_by_name=params.get("group_slices_by_name", True),
+        group_slices_by_name=params.group_slices_by_name,
         on_sliced=_sliced_hook(job.id, tracks_output_dir, meeting_url, provider),
     )
     catalogue.save_session(
@@ -503,12 +535,12 @@ def _run_transcribe(job: Job, params: dict) -> dict:
     )
     store.attach_session(job.id, transcribed.session_id, tracks_output_dir)
 
-    return {
-        "recording_path": tracks_output_dir,
-        "session_metadata_path": metadata_path,
-        "recording_id": transcribed.session_id,
-        "transcribed_slices_session": transcribed.model_dump(mode="json"),
-    }
+    return JobResultDTO(
+        recording_path=tracks_output_dir,
+        session_metadata_path=metadata_path,
+        recording_id=transcribed.session_id,
+        transcribed_slices_session=transcribed,
+    )
 
 
 # --- stopping and cancelling ----------------------------------------------
@@ -558,17 +590,21 @@ def cancel(job_id: str) -> Job:
     if job.status.is_terminal:
         raise JobNotStoppable(f"Job {job_id} already finished as {job.status.value}.")
 
-    if _process_alive(job.pid, job.pid_start):
-        _kill_group(job.pid)  # type: ignore[arg-type]
+    if job.pid is not None and _process_alive(job.pid, job.pid_start):
+        _kill_group(job.pid)
     else:
-        logger.warning(f"Job {job_id} has no live process (pid {job.pid}); marking it cancelled")
+        logger.warning(
+            f"Job {job_id} has no live process (pid {job.pid}); marking it cancelled"
+        )
 
     store.finish_job(job_id, JobStatus.CANCELLED, error="The job was cancelled.")
     if job.recording_id and job.session_dir:
         store.upsert_recording(
-            recording_id=job.recording_id,
-            session_dir=job.session_dir,
-            status=catalogue.STATUS_FAILED,
+            RecordingUpsertDTO(
+                recording_id=job.recording_id,
+                session_dir=job.session_dir,
+                status=catalogue.STATUS_FAILED,
+            )
         )
     _reap()
     return _require_job(job_id)
@@ -645,12 +681,16 @@ def reconcile() -> list[str]:
         )
         if job.recording_id and job.session_dir:
             store.upsert_recording(
-                recording_id=job.recording_id,
-                session_dir=job.session_dir,
-                status=catalogue.STATUS_FAILED,
+                RecordingUpsertDTO(
+                    recording_id=job.recording_id,
+                    session_dir=job.session_dir,
+                    status=catalogue.STATUS_FAILED,
+                )
             )
         failed.append(job.id)
 
     if failed:
-        logger.warning(f"Failed {len(failed)} job(s) left running by a previous process: {failed}")
+        logger.warning(
+            f"Failed {len(failed)} job(s) left running by a previous process: {failed}"
+        )
     return failed

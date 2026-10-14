@@ -14,6 +14,12 @@ from fastapi.testclient import TestClient
 from gravai.api.app import app
 from gravai.jobs import store
 from gravai.jobs.models import JobStatus, JobType
+from gravai.models.database import (
+    JobParamsDTO,
+    JobResultDTO,
+    ParticipantDTO,
+    RecordingUpsertDTO,
+)
 
 
 @pytest.fixture
@@ -25,28 +31,52 @@ def client(database):
 def _seed_recording(recording_id="rec-1"):
     started = datetime.now(UTC) - timedelta(minutes=30)
     store.upsert_recording(
-        recording_id, f"/tmp/{recording_id}_tracks", "complete",
-        meeting_url="https://meet.google.com/abc-defg-hij", provider="meet",
-        started_at=started, ended_at=started + timedelta(minutes=25),
-        main_track_path=f"/tmp/{recording_id}_tracks/track_mainAudio-1.wav",
-        meeting_transcript_text="bom dia a todos",
-        meeting_transcript_segments=[{"start": 1.0, "end": 2.5, "text": " bom dia a todos"}],
+        RecordingUpsertDTO(
+            recording_id=recording_id,
+            session_dir=f"/tmp/{recording_id}_tracks",
+            status="complete",
+            meeting_url="https://meet.google.com/abc-defg-hij",
+            provider="meet",
+            started_at=started,
+            ended_at=started + timedelta(minutes=25),
+            main_track_path=f"/tmp/{recording_id}_tracks/track_mainAudio-1.wav",
+            meeting_transcript_text="bom dia a todos",
+            meeting_transcript_segments=[
+                {"start": 1.0, "end": 2.5, "text": " bom dia a todos"}
+            ],
+        )
     )
-    store.replace_participants(recording_id, [{
-        "participant_id": "Ana",
-        "participant_name": "Ana",
-        "track_path": f"/tmp/{recording_id}_tracks/track_Ana.wav",
-        "speech_track_path": f"/tmp/{recording_id}_tracks/track_Ana_speech.wav",
-        "segments": [{"start": 1.0, "end": 4.0}, {"start": 61.0, "end": 66.5}],
-        "transcript_text": "bom dia",
-        "transcript_segments": [{"start": 1.0, "end": 2.5, "text": " bom dia"}],
-    }])
+    store.replace_participants(
+        recording_id,
+        [
+            ParticipantDTO.model_validate(
+                {
+                    "participant_id": "Ana",
+                    "participant_name": "Ana",
+                    "track_path": f"/tmp/{recording_id}_tracks/track_Ana.wav",
+                    "speech_track_path": f"/tmp/{recording_id}_tracks/track_Ana_speech.wav",
+                    "segments": [
+                        {"start": 1.0, "end": 4.0},
+                        {"start": 61.0, "end": 66.5},
+                    ],
+                    "transcript_text": "bom dia",
+                    "transcript_segments": [
+                        {"start": 1.0, "end": 2.5, "text": " bom dia"}
+                    ],
+                }
+            )
+        ],
+    )
 
 
 def test_submitting_answers_with_a_job_and_not_a_result(client):
-    response = client.post("/jobs", json={
-        "type": "record", "meeting_url": "https://meet.google.com/abc-defg-hij",
-    })
+    response = client.post(
+        "/jobs",
+        json={
+            "type": "record",
+            "meeting_url": "https://meet.google.com/abc-defg-hij",
+        },
+    )
 
     assert response.status_code == 202
     job = response.json()
@@ -57,7 +87,9 @@ def test_submitting_answers_with_a_job_and_not_a_result(client):
 
 
 def test_a_url_no_provider_claims_is_a_bad_request(client):
-    response = client.post("/jobs", json={"type": "record", "meeting_url": "https://example.com/x"})
+    response = client.post(
+        "/jobs", json={"type": "record", "meeting_url": "https://example.com/x"}
+    )
 
     assert response.status_code == 400
     assert "No provider matches" in response.json()["detail"]
@@ -94,15 +126,17 @@ def test_the_meeting_shorthands_submit_the_same_jobs(client):
 
 
 def test_ending_a_job_that_has_already_ended_is_a_conflict(client):
-    store.create_job("done", JobType.RECORD, {})
-    store.finish_job("done", JobStatus.SUCCEEDED, result={})
+    store.create_job("done", JobType.RECORD, JobParamsDTO.model_validate({}))
+    store.finish_job(
+        "done", JobStatus.SUCCEEDED, result=JobResultDTO.model_validate({})
+    )
 
     assert client.post("/jobs/done/stop").status_code == 409
     assert client.post("/jobs/done/cancel").status_code == 409
 
 
 def test_a_running_job_cannot_be_deleted_out_from_under_itself(client):
-    store.create_job("live", JobType.RECORD, {})
+    store.create_job("live", JobType.RECORD, JobParamsDTO.model_validate({}))
     store.mark_started("live", pid=1234)
 
     assert client.delete("/jobs/live").status_code == 409
@@ -147,7 +181,7 @@ def test_audio_that_is_catalogued_but_gone_reports_as_gone(client):
 
 
 def test_the_log_is_empty_until_a_recording_has_somewhere_to_write(client):
-    store.create_job("fresh", JobType.RECORD, {})
+    store.create_job("fresh", JobType.RECORD, JobParamsDTO.model_validate({}))
 
     log = client.get("/jobs/fresh/log").json()
     assert log["lines"] == []
@@ -155,7 +189,7 @@ def test_the_log_is_empty_until_a_recording_has_somewhere_to_write(client):
 
 
 def test_the_log_comes_back_from_the_session_directory(client, tmp_path):
-    store.create_job("logged", JobType.RECORD, {})
+    store.create_job("logged", JobType.RECORD, JobParamsDTO.model_validate({}))
     store.attach_session("logged", "session-1", str(tmp_path))
     (tmp_path / "session.log").write_text("\n".join(f"line {n}" for n in range(500)))
 
@@ -260,13 +294,29 @@ def test_delete_transcription_and_optional_audio(client, tmp_path, both):
     segments.write_text("[]")
     unrelated = tmp_path / "notes.txt"
     unrelated.write_text("keep")
-    store.upsert_recording("delete-me", str(tmp_path), "complete",
-                           main_track_path=str(track), meeting_transcript_text="hello")
-    store.replace_participants("delete-me", [{
-        "participant_id": "speaker", "track_path": str(track),
-        "transcript_text": "hello", "transcript_segments": [],
-        "segments": [{"start": 0, "end": 1}],
-    }])
+    store.upsert_recording(
+        RecordingUpsertDTO(
+            recording_id="delete-me",
+            session_dir=str(tmp_path),
+            status="complete",
+            main_track_path=str(track),
+            meeting_transcript_text="hello",
+        )
+    )
+    store.replace_participants(
+        "delete-me",
+        [
+            ParticipantDTO.model_validate(
+                {
+                    "participant_id": "speaker",
+                    "track_path": str(track),
+                    "transcript_text": "hello",
+                    "transcript_segments": [],
+                    "segments": [{"start": 0, "end": 1}],
+                }
+            )
+        ],
+    )
     route = "files" if both else "transcription"
     assert client.delete(f"/recordings/delete-me/{route}").status_code == 204
     assert not text.exists() and not segments.exists()
@@ -276,14 +326,21 @@ def test_delete_transcription_and_optional_audio(client, tmp_path, both):
     if both:
         assert recording is None
     else:
-        assert recording["meeting_transcript_text"] is None
-        assert recording["participants"][0]["transcript_text"] is None
-        assert recording["participants"][0]["transcript_segments"] is None
-        assert recording["participants"][0]["segments"] == [{"start": 0, "end": 1}]
+        assert recording.meeting_transcript_text is None
+        assert recording.participants[0].transcript_text is None
+        assert recording.participants[0].transcript_segments is None
+        assert [
+            (segment.start, segment.end)
+            for segment in recording.participants[0].segments
+        ] == [(0, 1)]
 
 
 @pytest.mark.parametrize("route", ["files", "transcription"])
 def test_delete_content_missing_or_active_recording(client, tmp_path, route):
     assert client.delete(f"/recordings/missing/{route}").status_code == 404
-    store.upsert_recording("busy", str(tmp_path), "recording")
+    store.upsert_recording(
+        RecordingUpsertDTO(
+            recording_id="busy", session_dir=str(tmp_path), status="recording"
+        )
+    )
     assert client.delete(f"/recordings/busy/{route}").status_code == 409

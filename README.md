@@ -34,7 +34,7 @@ Nothing here fits inside an HTTP request: a recording lasts as long as the meeti
 
 ### The audio comes from the operating system, not from the page
 
-Each recording loads a PulseAudio null sink of its own and launches its browser with `PULSE_SINK` pointing at it, so that browser and everything it spawns play into that sink and nothing else lands there. ffmpeg records the sink's monitor for the length of the meeting into `track_mainAudio.wav`.
+Each recording loads a PulseAudio null sink of its own and launches its browser with `PULSE_SINK` pointing at it, so that browser and everything it spawns play into that sink and nothing else lands there. ffmpeg records the sink's monitor for the length of the meeting into `track_mainAudio.flac`.
 
 That is what makes two recordings at once safe - neither can hear the other - and it is also why nothing is injected into the page to get the audio any more. Tapping WebRTC from inside the page was where every audio defect in this project came from, and all of them wrote a full-length wav of zeros, which reaches transcription as a quiet meeting rather than as an error. `docs/audio-capture-options.md` has the options that were weighed and the measurements behind the choice.
 
@@ -196,7 +196,7 @@ A job is `queued`, then `running`, and ends `succeeded`, `failed` or `cancelled`
 |---|---|---|
 | What it does | Asks the recording to leave the meeting | Kills the job's process group |
 | The meeting | Ends early | Ends early |
-| The recording | Finalized, sliced and transcribed as if everyone had hung up | The captured audio is closed off but nothing is sliced or transcribed, and no speaking timeline was written - so what is left is a wav and not a recording |
+| The recording | Finalized, sliced and transcribed as if everyone had hung up | The captured audio is closed off but nothing is sliced or transcribed, and no speaking timeline was written - so what is left is an audio file and not a complete recording |
 | Ends as | `succeeded`, with a real result | `cancelled`, with nothing |
 
 Stop is a request, delivered as a file in the session directory, that the recording notices on its next pass around the call loop - so the call returns while the job is still winding up. It applies only to a job that is in a meeting: a transcription has no meeting to leave and no point at which abandoning it leaves something usable, so stop refuses it rather than killing it under a friendlier name.
@@ -268,9 +268,9 @@ Each run writes to `$SAVE_DIR/<date>_<uuid>_tracks/`:
 
 | File | Contents |
 |---|---|
-| `track_mainAudio.wav` | The full meeting audio as one mixed track, captured from this recording's PulseAudio sink |
-| `track_<participant>.wav` | One per participant, silent outside their speaking turns, aligned to the main track |
-| `track_<participant>_speech.wav` | The same turns concatenated with the silence removed - what whisper is given |
+| `track_mainAudio.flac` | The full meeting audio as one mixed track, captured from this recording's PulseAudio sink |
+| `track_<participant>.flac` | One per participant, silent outside their speaking turns, aligned to the main track |
+| `track_<participant>_speech.flac` | The same turns concatenated with the silence removed - what whisper is given |
 | `*_transcription_text.txt` | Plain transcript, one per participant plus one for the mixed track |
 | `*_transcription_segments.json` | Timestamped segments, both mapped onto the meeting's timeline |
 | `session_metadata.json` | Participants and their track paths |
@@ -281,7 +281,7 @@ Each run writes to `$SAVE_DIR/<date>_<uuid>_tracks/`:
 | `stop.request` | Present when somebody asked this recording to leave the meeting |
 | `session.log` | This session's log, also appended to `./logs/session.log` |
 
-The transcripts and the speaking segments are also copied into the SQLite catalogue at `DATABASE_PATH`, which is what `GET /recordings` reads - so listing meetings and reading one back does not mean opening a file per speaker. The audio itself stays on disk and is only pointed at from there.
+The transcripts and the speaking segments are also copied into the SQLite catalogue at `DATABASE_PATH`, which is what `GET /recordings` reads - so listing meetings and reading one back does not mean opening a file per speaker. The audio itself stays on disk and is only pointed at from there. Participant tracks use lossless FLAC to compress the silent gaps. The main recording also uses FLAC, and FLAC is uploaded directly to Whisper without conversion. Existing WAV tracks remain supported; they are not automatically converted.
 
 ## Layout
 
@@ -332,3 +332,10 @@ Use the separate Google Meet and Teams environments to test the backend without
 provider accounts. They exercise the production browser join flows, speaker
 observers, and audio capture using real WebRTC audio and repeatable scenarios.
 See [setup, scenarios, and fidelity limits](docs/meeting-simulation.md).
+
+## Type checks
+
+Run `make typecheck` (or `uv run pyright`) for the Python backend and
+`npm --prefix src/frontend run typecheck` for the frontend. Python checks include
+parameter types and collection element types; browser events, recorder results,
+and Whisper responses have shared typed contracts in `gravai.models.events`.
