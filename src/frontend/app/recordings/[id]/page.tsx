@@ -1,9 +1,13 @@
 "use client";
 
+import { Icon } from "@/components/Icon";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
+import { ProviderBadge } from "@/components/ProviderBadge";
+import { DeleteButton } from "@/components/DeleteButton";
+import { JobsTable } from "@/components/JobsTable";
 import { Pill } from "@/components/Pill";
 import { SegmentsDrawer } from "@/components/SegmentsDrawer";
 import { SpeakerPanel } from "@/components/SpeakerPanel";
@@ -20,6 +24,7 @@ export default function RecordingPage() {
   const recordingId = decodeURIComponent(id);
   const router = useRouter();
   const { attempt } = useToast();
+  const [showSpeakers, setShowSpeakers] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   // Two calls, so one fetcher: the page has nothing to show until both land.
@@ -86,7 +91,7 @@ export default function RecordingPage() {
       <>
         <div className="error-box">{error}</div>
         <p>
-          <Link href="/recordings">← All recordings</Link>
+          <Link href="/recordings"><Icon name="arrow-left" /> All recordings</Link>
         </p>
       </>
     );
@@ -118,10 +123,11 @@ export default function RecordingPage() {
   return (
     <>
       <p>
-        <Link href="/recordings">← All recordings</Link>
+        <Link href="/recordings"><Icon name="arrow-left" /> All recordings</Link>
       </p>
       <h1>{recording.meeting_url || "Meeting"}</h1>
       <p className="subtitle mono">{recording.id}</p>
+      <p className="mono folder-path">{recording.session_dir}</p>
 
       <section className="panel">
         <dl className="meta-grid">
@@ -145,7 +151,7 @@ export default function RecordingPage() {
           </div>
           <div>
             <dt>Provider</dt>
-            <dd>{recording.provider || "—"}</dd>
+            <dd><ProviderBadge provider={recording.provider} meetingUrl={recording.meeting_url} />{!recording.provider && !recording.meeting_url && "—"}</dd>
           </div>
           <div>
             <dt>Speakers</dt>
@@ -154,27 +160,14 @@ export default function RecordingPage() {
         </dl>
 
         <details className="drawer" style={{ marginTop: 16 }}>
-          <summary>files and jobs</summary>
+          <summary>Recording files and related jobs</summary>
           <div>
             <p className="mono faint">{recording.session_dir}</p>
-            <p className="dim" style={{ fontSize: 13 }}>
+            <p className="dim" >
               Transcribe re-runs slicing and whisper over that directory.
             </p>
             {jobs.length > 0 && (
-              <table>
-                <tbody>
-                  {jobs.map((job) => (
-                    <tr key={job.id}>
-                      <td>{job.type}</td>
-                      <td>
-                        <Pill status={job.status} />
-                      </td>
-                      <td className="dim">{fmtDateTime(job.created_at)}</td>
-                      <td className="mono faint">{job.id.slice(0, 8)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="jobs-table-scroll"><JobsTable jobs={jobs} onChanged={refresh} /></div>
             )}
             <div className="row" style={{ marginTop: 14 }}>
               <button className="small danger" onClick={() => void forget()}>
@@ -190,27 +183,26 @@ export default function RecordingPage() {
 
       <section className="panel">
         <div className="section-head">
-          <h2 style={{ margin: 0 }}>The whole meeting</h2>
+          <h2 style={{ margin: 0 }}>Meeting audio and transcript</h2>
           <span className="faint">
             one pass over the mixed track: overlaps intact, no speaker names
           </span>
           {transcribeButton}
         </div>
         <div className="row" style={{ marginBottom: 14 }}>
-          <button
-            className="small delete-transcription"
+          <DeleteButton
+            className="delete-transcription"
             disabled={deleting || transcribing || jobs.some((job) => ACTIVE_STATUSES.includes(job.status)) || ["recording", "processing"].includes(recording.status) || !hasTranscript}
             onClick={() => void deleteContent(false)}
           >
             Delete transcription
-          </button>
-          <button
-            className="small delete-both"
+          </DeleteButton>
+          <DeleteButton
             disabled={deleting || transcribing || jobs.some((job) => ACTIVE_STATUSES.includes(job.status)) || ["recording", "processing"].includes(recording.status)}
             onClick={() => void deleteContent(true)}
           >
             Delete recording and transcription
-          </button>
+          </DeleteButton>
         </div>
         {recording.main_track_path && (
           <audio controls preload="none" src={audioUrl.meeting(recording.id)} />
@@ -226,15 +218,19 @@ export default function RecordingPage() {
       </section>
 
       <div className="section-head">
-        <h2 style={{ margin: 0 }}>By speaker</h2>
+        <h2 style={{ margin: 0 }}>Speaker transcripts ({recording.participants.length})</h2>
+        <button className="small" aria-expanded={showSpeakers} onClick={() => setShowSpeakers(!showSpeakers)}>{showSpeakers ? "Collapse speakers" : "Show all speakers"}</button>
       </div>
       {recording.participants.length ? (
         recording.participants.map((participant) => (
+          <details className="speaker-details" key={participant.participant_id} open={showSpeakers}>
+          <summary>{participant.participant_name || participant.participant_id}</summary>
           <SpeakerPanel
             key={participant.participant_id}
             recording={recording}
             participant={participant}
           />
+          </details>
         ))
       ) : (
         <div className="empty">

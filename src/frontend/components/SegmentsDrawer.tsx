@@ -1,3 +1,4 @@
+import { Icon } from "@/components/Icon";
 import { fmtClock } from "@/lib/format";
 import type { TranscriptSegment } from "@/lib/types";
 
@@ -13,7 +14,7 @@ export function SegmentsDrawer({ segments }: { segments: TranscriptSegment[] | n
         {segments.map((segment, index) => (
           <div className="seg" key={index}>
             <time>
-              {fmtClock(segment.start)} → {fmtClock(segment.end)}
+              {fmtClock(segment.start)} <Icon name="arrow-right" /> {fmtClock(segment.end)}
             </time>
             <span>{(segment.text || "").trim()}</span>
           </div>

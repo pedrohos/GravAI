@@ -1,3 +1,4 @@
+import { Icon } from "@/components/Icon";
 import { audioUrl } from "@/lib/api";
 import { fmtClock, fmtDuration } from "@/lib/format";
 import type { Participant, Recording } from "@/lib/types";
@@ -67,7 +68,7 @@ export function SpeakerPanel({
               participant.segments.map((segment, index) => (
                 <div className="seg" key={index}>
                   <time>
-                    {fmtClock(segment.start)} → {fmtClock(segment.end)}
+                    {fmtClock(segment.start)} <Icon name="arrow-right" /> {fmtClock(segment.end)}
                   </time>
                   <span className="faint">{fmtDuration(segment.end - segment.start)}</span>
                 </div>

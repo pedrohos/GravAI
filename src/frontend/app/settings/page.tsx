@@ -15,12 +15,7 @@ export default function SettingsPage() {
 
   return (
     <>
-      <h1>Settings</h1>
-      <p className="subtitle">
-        Written to <span className="mono">{data.env_file}</span>. A change applies to every job
-        started after it and survives a restart; a recording already in a meeting keeps the
-        settings it began with.
-      </p>
+      <h1 className="settings-heading">Settings</h1>
       <SettingsForm config={data} onSaved={refresh} />
     </>
   );

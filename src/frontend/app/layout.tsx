@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { CaptchaBanner } from "@/components/CaptchaBanner";
+import { Icon } from "@/components/Icon";
 import { Tabs } from "@/components/Tabs";
 import { ToastProvider } from "@/components/Toast";
 
@@ -10,9 +11,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "GravAI",
   icons: {
-    icon:
-      "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" +
-      "<text y='26' font-size='26'>🎙️</text></svg>",
+    icon: "/icons/mic.svg",
   },
 };
 
@@ -23,14 +22,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ToastProvider>
           <header className="topbar">
             <Link className="brand" href="/jobs">
-              <span className="brand-mark" aria-hidden="true">
-                ◉
-              </span>
+              <Icon name="record-dot" />
               <span>GravAI</span>
             </Link>
             <Tabs />
             <a className="docs-link" href="/docs" target="_blank" rel="noreferrer">
-              API docs ↗
+              API docs <Icon name="external" />
             </a>
           </header>
 

@@ -5,17 +5,8 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Job } from "@/lib/types";
 
+import { ProviderBadge, providerOf } from "./ProviderBadge";
 type Provider = "meet" | "teams";
-
-function providerOf(provider: unknown, meetingUrl?: string | null): Provider | null {
-  if (provider === "meet" || provider === "teams") return provider;
-  try {
-    const host = new URL(meetingUrl ?? "").hostname;
-    if (host === "meet.google.com") return "meet";
-    if (host === "teams.microsoft.com" || host === "teams.live.com" || host.endsWith(".teams.microsoft.com")) return "teams";
-  } catch { /* A recording directory is not a meeting URL. */ }
-  return null;
-}
 
 export function MeetingRecordingLink({ job }: { job: Job }) {
   const knownProvider = providerOf(job.params.provider, job.params.meeting_url);
@@ -37,14 +28,7 @@ export function MeetingRecordingLink({ job }: { job: Job }) {
       <Link className="button small open-recording" href={`/recordings/${encodeURIComponent(job.recording_id)}`}>
         OPEN RECORDING
       </Link>
-      {provider && (
-        <span className={`provider-badge provider-${provider}`}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <rect x="3" y="6" width="12" height="12" rx="2" /><path d="m15 10 6-3v10l-6-3" />
-          </svg>
-          {provider === "meet" ? "Meet" : "Teams"}
-        </span>
-      )}
+      <ProviderBadge provider={provider} />
     </div>
   );
 }

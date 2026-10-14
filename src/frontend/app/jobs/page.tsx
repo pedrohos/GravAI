@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Filters, FilterField } from "@/components/Filters";
+import { Icon } from "@/components/Icon";
 import { JobForm } from "@/components/JobForm";
 import { JobsTable } from "@/components/JobsTable";
 import { api } from "@/lib/api";
@@ -30,32 +32,36 @@ export default function JobsPage() {
       <section className="panel">
         <div className="section-head">
           <h2 style={{ margin: 0 }}>Submitted Jobs</h2>
-          <div className="row row-end job-filters">
+          <Filters>
+            <FilterField label="Status">
             <select
               aria-label="Filter by status"
               value={status}
               onChange={(event) => setStatus(event.target.value)}
             >
-              <option value="">Filter status</option>
+              <option value="">All statuses</option>
               {STATUSES.map((value) => (
                 <option key={value} value={value}>
                   {value.toUpperCase()}
                 </option>
               ))}
             </select>
+            </FilterField>
+            <FilterField label="Task type">
             <select
               aria-label="Filter by task type"
               value={type}
               onChange={(event) => setType(event.target.value)}
             >
-              <option value="">Filter task type</option>
+              <option value="">All task types</option>
               {["record", "transcribe"].map((value) => (
                 <option key={value} value={value}>
                   {value.toUpperCase()}
                 </option>
               ))}
             </select>
-          </div>
+            </FilterField>
+          </Filters>
         </div>
 
         {(status || type) && (
@@ -63,13 +69,13 @@ export default function JobsPage() {
             {status && (
               <span className={`pill filter-chip ${status}`}>
                 Status: {status.toUpperCase()}
-                <button aria-label="Clear status filter" onClick={() => setStatus("")}>×</button>
+                <button aria-label="Clear status filter" onClick={() => setStatus("")}><Icon name="x" /></button>
               </span>
             )}
             {type && (
               <span className={`pill filter-chip job-kind-${type}`}>
                 Task: {type.toUpperCase()}
-                <button aria-label="Clear task type filter" onClick={() => setType("")}>×</button>
+                <button aria-label="Clear task type filter" onClick={() => setType("")}><Icon name="x" /></button>
               </span>
             )}
           </div>

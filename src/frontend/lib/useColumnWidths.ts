@@ -22,7 +22,7 @@ export function useColumnWidths(storageKey: string, count: number) {
   }, [storageKey, count]);
 
   function measuredWidths(): number[] {
-    return Array.from(tableRef.current?.querySelectorAll("thead th") ?? []).map((cell) => cell.getBoundingClientRect().width);
+    return Array.from(tableRef.current?.querySelectorAll("thead th") ?? []).map((cell) => clamp(cell.getBoundingClientRect().width));
   }
 
   function remember(next: number[]) {

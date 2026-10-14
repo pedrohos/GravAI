@@ -25,7 +25,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 17px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -210,8 +210,8 @@ details.drawer > summary {
   color: var(--text-dim);
   list-style: none;
 }
-details.drawer > summary::before { content: "▸ "; }
-details.drawer[open] > summary::before { content: "▾ "; }
+details.drawer > summary::before { content: ""; display: inline-block; width: 16px; height: 16px; margin-right: 6px; vertical-align: -2px; background: currentColor; mask: url(/icons/chevron-right.svg) center / contain no-repeat; }
+details.drawer[open] > summary::before { transform: rotate(90deg); }
 details.drawer > summary:hover { color: var(--text); }
 details.drawer > div { padding-bottom: 14px; }
 
@@ -332,7 +332,6 @@ a.open-recording:hover { text-decoration: none; border-color: var(--accent); }
 .job-form select, .job-form input[type="text"] { height: 42px; }
 .job-form select, .job-filters select {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239aa4b4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 16px center;
   padding-right: 42px;
@@ -373,3 +372,74 @@ button.info-trigger { display: inline-flex; align-items: center; justify-content
   .topbar .tabs { order: 3; width: 100%; }
   .topbar .docs-link { margin-left: auto; }
 }
+
+/* Shared readable table and recording controls. Column growth stays inside the scroll area. */
+.view:has(.recordings-page) { max-width: none; }
+.view, .panel, .jobs-page, .recordings-page { min-width: 0; }
+.jobs-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; padding-bottom: 8px; }
+.jobs-table-scroll table { min-width: 1000px; max-width: none; }
+.jobs-table { table-layout: fixed; }
+.jobs-table th, .jobs-table td { overflow-wrap: anywhere; white-space: normal; }
+h1 { font-size: 28px; overflow-wrap: anywhere; }
+h2 { font-size: 20px; }
+h3 { font-size: 18px; }
+.subtitle, .tabs a, button, .button, button.small, a.open-recording { font-size: 16px; }
+table, .meta-grid dd, .transcript { font-size: 17px; }
+th, label, .pill, .provider-badge, .chip, details.drawer > summary, .meta-grid dt { font-size: 15px; }
+.mono, pre.log, pre.json { font-size: 15px; overflow-wrap: anywhere; }
+pre.log, pre.json { line-height: 1.7; max-height: 480px; }
+.faint { color: #a1aaba; }
+.folder-path, .meeting-title, .subtitle, .chip, .transcript { overflow-wrap: anywhere; }
+.folder-path, .meeting-title { margin-top: 10px; white-space: normal; }
+.section-head { flex-wrap: wrap; }
+.sort-button { border: 0; background: transparent; padding: 4px 0; text-align: left; color: var(--text-dim); font-size: inherit; font-weight: inherit; text-transform: uppercase; }
+.sort-button:hover { color: var(--accent); }
+.sort-button:focus-visible { outline: 2px solid var(--accent); }
+.result-fields { margin: 0; }
+.result-fields > div { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.result-fields dt { color: var(--text-dim); font-weight: 600; }
+.result-fields dd { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.speaker-details > summary { cursor: pointer; padding: 14px 16px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); overflow-wrap: anywhere; }
+.speaker-details { margin-bottom: 14px; }
+.chips + button { margin-top: 10px; }
+@media (max-width: 600px) {
+  .view { padding: 20px 16px 60px; }
+  .panel { padding: 16px; }
+  .segments .seg { flex-wrap: wrap; }
+}
+
+.icon { display: inline-block; flex-shrink: 0; width: 18px; height: 18px; vertical-align: -3px; background-color: currentColor; mask-size: contain; mask-repeat: no-repeat; mask-position: center; background-size: contain; background-repeat: no-repeat; background-position: center; }
+.icon-record-dot { width: 20px; height: 20px; }
+.sort-button { display: inline-flex; align-items: center; gap: 8px; }
+.filters { border: 0; padding: 0; min-width: 0; margin-top: 0; margin-bottom: 0; }
+.filters legend { color: var(--text-dim); font-size: 15px; font-weight: 600; margin-bottom: 7px; padding: 0; }
+.filters .job-filters { align-items: center; }
+.filters select { min-width: 180px; }
+@media (max-width: 600px) { .filters { margin-left: 0; width: 100%; } }
+
+.drawer.unavailable { border-top: 1px solid var(--border); }
+.drawer.unavailable > summary, .unavailable-label { color: #788292; cursor: default; }
+.drawer.unavailable > summary:hover { color: #788292; }
+.unavailable-label { display: block; padding: 9px 0; font-size: 15px; }
+.unavailable-label::before { content: ""; display: inline-block; width: 16px; height: 16px; margin-right: 6px; vertical-align: -2px; background: currentColor; mask: url(/icons/chevron-right.svg) center / contain no-repeat; }
+
+.icon-record-dot { background-color: var(--bad); mask-size: 120px; }
+
+.job-form select, .job-filters select { background-image: url(/icons/chevron-down.svg); background-size: 16px; }
+
+/* Filter labels and selectors share one baseline, with room for the full option text. */
+.filters .job-filters { align-items: flex-end; gap: 16px; }
+.filter-field { display: flex; flex-direction: column; gap: 6px; margin: 0; flex: 1 1 220px; }
+.filter-field > span { font-weight: 600; }
+.filters .filter-field select { width: 100%; min-width: 220px; height: auto; min-height: 46px; line-height: 1.5; padding: 10px 42px 10px 16px; }
+.filter-chip button { color: var(--bad); display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; }
+.jobs-table td.actions { text-align: center; padding-left: 8px; padding-right: 8px; }
+.jobs-table td.actions button { margin: 0 3px 6px; }
+.drawer.unavailable > summary { cursor: pointer; }
+.drawer.unavailable > summary:hover { color: var(--text-dim); }
+@media (max-width: 600px) {
+  .filter-field { flex-basis: 100%; }
+  .filters .filter-field select { min-width: 0; }
+}
+
+.settings-heading { padding-bottom: 20px; }

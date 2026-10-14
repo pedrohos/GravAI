@@ -1,5 +1,7 @@
-/** A status, coloured by what it is. The class names are the statuses
- *  themselves - see the .pill rules in globals.css. */
+/** Recording lifecycle states share the job status labels and styling. */
+export const normalizedStatus = (status: string) => ({ recording: "running", processing: "running", complete: "succeeded" }[status] ?? status);
+export const statusLabel = (status: string) => normalizedStatus(status).toUpperCase();
+
 export function Pill({ status }: { status: string }) {
-  return <span className={`pill ${status}`}>{status}</span>;
+  return <span className={`pill ${normalizedStatus(status)}`}>{statusLabel(status)}</span>;
 }

@@ -1,5 +1,9 @@
 "use client";
 
+import { Icon } from "./Icon";
+import { JobResults } from "./JobResults";
+import { DeleteButton } from "./DeleteButton";
+import { TableHeader, useTableSort } from "./TableControls";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { MeetingRecordingLink } from "./MeetingRecordingLink";
 import { api } from "@/lib/api";
@@ -19,8 +23,10 @@ const CANCEL_WARNING =
 
 export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => void }) {
   const { attempt } = useToast();
-  const columns = ["JOB TYPE", "Status", "Submitted", "Meeting recordings", "Actions"];
+  const columns = ["JOB TYPE", "Status", "Created at", "Meeting recordings", "Actions"];
   const sizing = useColumnWidths("gravai.jobs.column-widths.v1", columns.length);
+
+  const sorting = useTableSort(jobs, [job => job.type, job => job.status, job => job.created_at, job => job.params.meeting_url || job.session_dir || job.params.tracks_output_dir, job => ACTIVE_STATUSES.includes(job.status) ? "Cancel" : "Delete"], 2, true);
 
   if (!jobs.length) return <div className="empty">No jobs yet. Submit one above.</div>;
 
@@ -46,29 +52,9 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
       <colgroup>
         {columns.map((label, index) => <col key={label} style={{ width: sizing.widths ? sizing.widths[index] : `${[17, 23, 20, 28, 12][index]}%` }} />)}
       </colgroup>
-      <thead>
-        <tr>
-          {columns.map((label, index) => (
-            <th key={label} scope="col">
-              {label}
-              <button
-                type="button"
-                className="column-resizer"
-                aria-label={`Resize ${label} column`}
-                title="Drag to resize; use arrow keys when focused"
-                onPointerDown={(event) => sizing.onPointerDown(index, event)}
-                onPointerMove={sizing.onPointerMove}
-                onPointerUp={sizing.onPointerEnd}
-                onPointerCancel={sizing.onPointerEnd}
-                onLostPointerCapture={sizing.onPointerEnd}
-                onKeyDown={(event) => sizing.onKeyDown(index, event)}
-              />
-            </th>
-          ))}
-        </tr>
-      </thead>
+      <TableHeader labels={columns} sizing={sizing} sorting={sorting} sortableCount={columns.length - 1} />
       <tbody>
-        {jobs.map((job) => {
+        {sorting.sorted.map((job) => {
           const active = ACTIVE_STATUSES.includes(job.status);
           // A transcription has no meeting to leave, and a recording that has
           // not reached a session directory yet has nothing to stop.
@@ -80,9 +66,7 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
               <td>
                 <div className="job-type-cell">
                 <span className={`job-kind job-kind-${job.type}`}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-                    {job.type === "transcribe" ? <><path d="M6 3h9l3 3v15H6z" /><path d="M9 10h6M9 14h6M9 18h4" /></> : <><rect x="3" y="6" width="13" height="12" rx="3" /><path d="m16 10 5-3v10l-5-3" /><circle cx="9.5" cy="12" r="2" fill="currentColor" /></>}
-                  </svg>
+                  <Icon name={job.type === "transcribe" ? "file-text" : "video"} />
                   {job.type === "transcribe" ? "Transcribe" : "Record"}
                 </span>
                 {job.depends_on && <div className="faint job-dependency">After recording</div>}
@@ -91,16 +75,9 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
 
               <td>
                 <span className="job-status"><Pill status={job.status} /></span>
-                {job.error && <div className="faint mono">{job.error.slice(0, 240)}</div>}
-                <JobLogDrawer jobId={job.id} />
-                {job.result && (
-                  <details className="drawer">
-                    <summary>result</summary>
-                    <div>
-                      <pre className="json">{JSON.stringify(job.result, null, 2)}</pre>
-                    </div>
-                  </details>
-                )}
+                {job.error && <div className="faint mono">{job.error}</div>}
+                <JobLogDrawer jobId={job.id} status={job.status} />
+                <JobResults result={job.result} />
               </td>
 
               <td className="dim"><time dateTime={job.created_at}>{fmtDateTime(job.created_at)}</time></td>
@@ -110,10 +87,11 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
                 <div
                   className="faint mono"
                   title={target}
-                  style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 8 }}
+                  style={{ marginTop: 8 }}
                 >
                   {target}
                 </div>
+                {job.session_dir && job.session_dir !== target && <div className="mono faint folder-path">{job.session_dir}</div>}
               </td>
 
               <td className="actions">
@@ -135,9 +113,9 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
                     Cancel
                   </button>
                 ) : (
-                  <button className="small delete-both" onClick={() => void remove(job)}>
+                  <DeleteButton onClick={() => void remove(job)}>
                     Delete
-                  </button>
+                  </DeleteButton>
                 )}
               </td>
             </tr>
