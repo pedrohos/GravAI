@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "./Icon";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { ConfigField, ConfigResponse } from "@/lib/types";
@@ -123,7 +124,7 @@ function Field({
       <label htmlFor={`set-${field.name}`}>{label}</label>
       {field.description && (
         <span className="info-tooltip">
-          <button type="button" className="info-trigger" aria-label={`Information about ${field.name}`} aria-describedby={descriptionId}>i</button>
+          <button type="button" className="info-trigger" aria-label={`Information about ${field.name}`} aria-describedby={descriptionId}><Icon name="info" /></button>
           <span id={descriptionId} role="tooltip" className="info-content">{field.description}</span>
         </span>
       )}

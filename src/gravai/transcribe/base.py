@@ -180,6 +180,7 @@ def transcribe_meeting_tracks(
         whisper_host: str,
         whisper_port: int,
         language: str | None = None,
+        transcribe_meeting: bool = True,
     ) -> TranscriptedSession:
     log_dir = _session_dir(session)
     logger = get_logger("transcribe", log_dir)
@@ -229,8 +230,9 @@ def transcribe_meeting_tracks(
             ),
         )
 
-    meeting_transcription = _transcribe_meeting(
-        session, whisper_host, whisper_port, language, logger
+    meeting_transcription = (
+        _transcribe_meeting(session, whisper_host, whisper_port, language, logger)
+        if transcribe_meeting else None
     )
 
     logger.info(f"Transcription completed for session {session.session_id}")

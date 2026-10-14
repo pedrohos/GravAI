@@ -37,7 +37,7 @@ from gravai.api import pipeline
 from gravai.config.logging_config import capture_job_logs, get_logger
 from gravai.jobs import catalogue, stop_signal, store
 from gravai.jobs.models import Job, JobStatus, JobSubmission, JobType
-from gravai.models.common import ParticipantData, RecordingType, Session
+from gravai.models.common import ParticipantData, RecordingType, Session, Track
 from gravai.models.database import (
     JobParamsDTO,
     JobResultDTO,
@@ -153,6 +153,8 @@ def _process_alive(pid: int | None, pid_start: int | None = None) -> bool:
 
 def _validate(submission: JobSubmission) -> JobParamsDTO:
     """Validate the combination before creating a database row or process."""
+    if submission.participant_id is not None and submission.type is not JobType.TRANSCRIBE:
+        raise JobError("A participant_id is only valid for a transcribe job.")
     if submission.type in (JobType.RECORD, JobType.RECORD_AND_TRANSCRIBE):
         if not submission.meeting_url:
             raise JobError(f"A {submission.type.value} job needs a meeting_url.")
@@ -171,8 +173,26 @@ def _validate(submission: JobSubmission) -> JobParamsDTO:
         raise JobError("A transcribe job needs tracks_output_dir.")
     if not os.path.isdir(submission.tracks_output_dir):
         raise JobError(f"No such recording directory: {submission.tracks_output_dir}")
+    existing = store.get_recording_by_session_dir(submission.tracks_output_dir)
+    if submission.participant_id is not None:
+        if not submission.participant_id or existing is None:
+            raise JobError("Speaker transcription requires a catalogued recording and participant_id.")
+        participant = next((p for p in existing.participants if p.participant_id == submission.participant_id), None)
+        if participant is None:
+            raise JobError(f"No speaker with id {submission.participant_id} in this recording.")
+        if not participant.track_path or not os.path.isfile(participant.track_path):
+            raise JobError("This speaker has no aligned audio track to transcribe.")
+        if existing.started_at is None or existing.ended_at is None or existing.status in ("recording", "processing"):
+            raise JobError("Wait for this recording to finish before transcribing a speaker.")
+    if existing:
+        for active in store.active_jobs():
+            same_recording = active.recording_id == existing.id or active.params.tracks_output_dir == submission.tracks_output_dir
+            conflicting_scope = submission.participant_id is None or active.params.participant_id in (None, submission.participant_id)
+            if same_recording and conflicting_scope:
+                raise JobError("A job is already working on this recording or speaker.")
     return JobParamsDTO(
         tracks_output_dir=submission.tracks_output_dir,
+        participant_id=submission.participant_id,
         group_slices_by_name=submission.group_slices_by_name,
     )
 
@@ -359,7 +379,7 @@ def _await_dependency(job: Job) -> None:
 def _mark_recording_failed(job_id: str) -> None:
     """Leaves the meeting this job was producing marked as failed, if there is one."""
     job = store.get_job(job_id)
-    if job is None or not job.recording_id or not job.session_dir:
+    if job is None or not job.recording_id or not job.session_dir or job.params.participant_id is not None:
         return
     store.upsert_recording(
         RecordingUpsertDTO(
@@ -514,6 +534,9 @@ def _recorded_directory(job: Job) -> str:
 def _run_transcribe(job: Job, params: JobParamsDTO) -> JobResultDTO:
     tracks_output_dir = params.tracks_output_dir or _recorded_directory(job)
 
+    if params.participant_id is not None:
+        return _run_participant_transcribe(job, params, tracks_output_dir)
+
     # A directory that has been recorded before is already a meeting in the
     # catalogue, and it is the only thing that still knows which provider it came
     # from and what URL it was - neither survives into the files on disk.
@@ -547,6 +570,38 @@ def _run_transcribe(job: Job, params: JobParamsDTO) -> JobResultDTO:
         recording_path=tracks_output_dir,
         session_metadata_path=metadata_path,
         recording_id=transcribed.session_id,
+        transcribed_slices_session=transcribed,
+    )
+
+
+def _run_participant_transcribe(job: Job, params: JobParamsDTO, session_dir: str) -> JobResultDTO:
+    recording = store.get_recording_by_session_dir(session_dir)
+    participant = next((p for p in recording.participants if p.participant_id == params.participant_id), None) if recording else None
+    if recording is None or participant is None or not participant.track_path:
+        raise JobError("The recording or speaker audio is no longer available.")
+    if recording.started_at is None or recording.ended_at is None:
+        raise JobError("The recording has not finished yet.")
+    store.attach_session(job.id, recording.id, session_dir)
+    session = Session[ParticipantData](
+        session_id=recording.id,
+        session_start=recording.started_at,
+        session_end=recording.ended_at,
+        main_track_path=recording.main_track_path,
+        tracks={participant.participant_id: ParticipantData(
+            participant_id=participant.participant_id,
+            participant_name=participant.participant_name or participant.participant_id,
+            track=Track(
+                audio_file_path=participant.track_path,
+                speech_audio_file_path=participant.speech_track_path,
+                speech_segments=participant.segments,
+            ),
+        )},
+    )
+    transcribed = pipeline.transcribe_participant(session, session_dir)
+    catalogue.save_participant(recording.id, transcribed.tracks[participant.participant_id])
+    return JobResultDTO(
+        recording_path=session_dir,
+        recording_id=recording.id,
         transcribed_slices_session=transcribed,
     )
 
@@ -606,7 +661,7 @@ def cancel(job_id: str) -> Job:
         )
 
     store.finish_job(job_id, JobStatus.CANCELLED, error="The job was cancelled.")
-    if job.recording_id and job.session_dir:
+    if job.recording_id and job.session_dir and job.params.participant_id is None:
         store.upsert_recording(
             RecordingUpsertDTO(
                 recording_id=job.recording_id,
@@ -687,7 +742,7 @@ def reconcile() -> list[str]:
                 f"{job.status.value}. It was most likely killed when the service stopped."
             ),
         )
-        if job.recording_id and job.session_dir:
+        if job.recording_id and job.session_dir and job.params.participant_id is None:
             store.upsert_recording(
                 RecordingUpsertDTO(
                     recording_id=job.recording_id,

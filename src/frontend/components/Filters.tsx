@@ -5,5 +5,5 @@ export function Filters({ children }: { children: ReactNode }) {
 }
 
 export function FilterField({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="filter-field"><span>{label}</span>{children}</label>;
+  return <div className="filter-field"><span>{label}</span>{children}</div>;
 }

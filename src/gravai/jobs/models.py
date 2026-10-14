@@ -27,5 +27,7 @@ class JobSubmission(BaseModel):
     meeting_url: str | None = None
     # For TRANSCRIBE: a directory a previous recording wrote.
     tracks_output_dir: str | None = None
+    # Optional: transcribe only this catalogued speaker, keeping the mix and other speakers.
+    participant_id: str | None = None
     slice_tracks: bool = True
     group_slices_by_name: bool = True

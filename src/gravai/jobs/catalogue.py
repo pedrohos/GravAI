@@ -161,3 +161,13 @@ def save_session(
         f"from {session_dir}"
     )
     return session.session_id
+
+
+def save_participant(recording_id: str, participant: ParticipantDataTransc) -> None:
+    """Refresh a single speaker's catalogue text after a scoped transcription."""
+    store.update_participant_transcription(
+        recording_id,
+        participant.participant_id,
+        _read_text(participant.transcription.transcription_text_file_path),
+        _read_json(participant.transcription.transcription_segments_file_path),
+    )

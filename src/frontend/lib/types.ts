@@ -48,6 +48,7 @@ export interface JobSubmission {
   type: JobType;
   meeting_url?: string;
   tracks_output_dir?: string;
+  participant_id?: string;
   slice_tracks: boolean;
   group_slices_by_name: boolean;
 }

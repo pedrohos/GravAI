@@ -1,5 +1,6 @@
 "use client";
 
+import { Dropdown } from "@/components/Dropdown";
 import { Icon } from "@/components/Icon";
 import { Filters, FilterField } from "@/components/Filters";
 import { normalizedStatus, statusLabel } from "@/components/Pill";
@@ -74,8 +75,19 @@ export default function RecordingsPage() {
           <div className="section-head">
             <h2 style={{ margin: 0 }}>Recorded meetings</h2>
             <Filters>
-              <FilterField label="Status"><select aria-label="Filter recordings by status" value={status} onChange={event => setStatus(event.target.value)}><option value="">All statuses</option>{Array.from(new Set(data.map(r => normalizedStatus(r.status)))).sort().map(value => <option key={value} value={value}>{statusLabel(value)}</option>)}</select></FilterField>
-              <FilterField label="Provider"><select aria-label="Filter recordings by provider" value={provider} onChange={event => setProvider(event.target.value)}><option value="">All providers</option><option value="meet">Meet</option><option value="teams">Teams</option></select></FilterField>
+              <FilterField label="Status">
+                <Dropdown label="Filter recordings by status" value={status} onChange={setStatus} options={[
+                  { value: "", label: "All statuses", content: <span className="pill filter-all">All statuses</span> },
+                  ...Array.from(new Set([...data.map(r => normalizedStatus(r.status)), ...(status ? [status] : [])])).sort().map(value => ({ value, label: statusLabel(value), content: <Pill status={value} /> })),
+                ]} />
+              </FilterField>
+              <FilterField label="Provider">
+                <Dropdown label="Filter recordings by provider" value={provider} onChange={setProvider} options={[
+                  { value: "", label: "All providers", content: <span className="provider-badge filter-all">All providers</span> },
+                  { value: "meet", label: "Meet", content: <ProviderBadge provider="meet" /> },
+                  { value: "teams", label: "Teams", content: <ProviderBadge provider="teams" /> },
+                ]} />
+              </FilterField>
             </Filters>
           </div>
           {(status || provider) && (

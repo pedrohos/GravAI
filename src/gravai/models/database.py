@@ -155,6 +155,7 @@ class JobParamsDTO(DatabaseDTO):
     meeting_url: str | None = None
     provider: str | None = None
     tracks_output_dir: str | None = None
+    participant_id: str | None = None
     slice_tracks: bool = True
     group_slices_by_name: bool = True
 

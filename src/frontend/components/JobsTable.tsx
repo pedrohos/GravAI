@@ -1,6 +1,6 @@
 "use client";
 
-import { Icon } from "./Icon";
+import { TaskTypeBadge } from "./TaskTypeBadge";
 import { JobResults } from "./JobResults";
 import { DeleteButton } from "./DeleteButton";
 import { TableHeader, useTableSort } from "./TableControls";
@@ -65,10 +65,7 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
             <tr key={job.id}>
               <td>
                 <div className="job-type-cell">
-                <span className={`job-kind job-kind-${job.type}`}>
-                  <Icon name={job.type === "transcribe" ? "file-text" : "video"} />
-                  {job.type === "transcribe" ? "Transcribe" : "Record"}
-                </span>
+                <TaskTypeBadge type={job.type} />
                 {job.depends_on && <div className="faint job-dependency">After recording</div>}
                 </div>
               </td>

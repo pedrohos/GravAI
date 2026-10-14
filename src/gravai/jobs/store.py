@@ -59,6 +59,7 @@ from gravai.models.database import (
     ParticipantDTO,
     RecordingDTO,
     RecordingUpsertDTO,
+    TranscriptSegmentDTO,
 )
 
 logger = get_logger("jobs.store")
@@ -422,6 +423,24 @@ def replace_participants(
         ]
         if values:
             connection.execute(insert(participants_table), values)
+
+
+def update_participant_transcription(
+    recording_id: str,
+    participant_id: str,
+    text: str | None,
+    segments: list[TranscriptSegmentDTO] | None,
+) -> None:
+    """Update only the selected speaker; preserve every other transcript and audio path."""
+    with connect() as connection:
+        connection.execute(
+            update(participants_table)
+            .where(
+                participants_table.c.recording_id == recording_id,
+                participants_table.c.participant_id == participant_id,
+            )
+            .values(transcript_text=text, transcript_segments=segments)
+        )
 
 
 def list_recordings(limit: int = 100, offset: int = 0) -> list[RecordingDTO]:

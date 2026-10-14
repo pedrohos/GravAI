@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { Filters, FilterField } from "@/components/Filters";
 import { Icon } from "@/components/Icon";
+import { Dropdown } from "@/components/Dropdown";
+import { Pill } from "@/components/Pill";
+import { TaskTypeBadge } from "@/components/TaskTypeBadge";
 import { JobForm } from "@/components/JobForm";
 import { JobsTable } from "@/components/JobsTable";
 import { api } from "@/lib/api";
@@ -34,32 +37,17 @@ export default function JobsPage() {
           <h2 style={{ margin: 0 }}>Submitted Jobs</h2>
           <Filters>
             <FilterField label="Status">
-            <select
-              aria-label="Filter by status"
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-            >
-              <option value="">All statuses</option>
-              {STATUSES.map((value) => (
-                <option key={value} value={value}>
-                  {value.toUpperCase()}
-                </option>
-              ))}
-            </select>
+              <Dropdown label="Filter by status" value={status} onChange={setStatus} options={[
+                { value: "", label: "All statuses", content: <span className="pill filter-all">All statuses</span> },
+                ...STATUSES.map(value => ({ value, label: value, content: <Pill status={value} /> })),
+              ]} />
             </FilterField>
             <FilterField label="Task type">
-            <select
-              aria-label="Filter by task type"
-              value={type}
-              onChange={(event) => setType(event.target.value)}
-            >
-              <option value="">All task types</option>
-              {["record", "transcribe"].map((value) => (
-                <option key={value} value={value}>
-                  {value.toUpperCase()}
-                </option>
-              ))}
-            </select>
+              <Dropdown label="Filter by task type" value={type} onChange={setType} options={[
+                { value: "", label: "All task types", content: <span className="job-kind filter-all">All task types</span> },
+                { value: "record", label: "Record", content: <TaskTypeBadge type="record" /> },
+                { value: "transcribe", label: "Transcribe", content: <TaskTypeBadge type="transcribe" /> },
+              ]} />
             </FilterField>
           </Filters>
         </div>

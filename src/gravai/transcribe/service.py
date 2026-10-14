@@ -12,6 +12,7 @@ def transcribe_meeting_tracks(
         whisper_server_host: str | None = None,
         whisper_server_port: int | None = None,
         language: str | None = None,
+        transcribe_meeting: bool = True,
     ) -> TranscriptedSession:
     settings = get_settings()
     whisper_host = whisper_server_host or settings.WHISPER_HOST
@@ -21,4 +22,5 @@ def transcribe_meeting_tracks(
         whisper_host,
         whisper_port,
         language or settings.WHISPER_LANGUAGE,
+        transcribe_meeting=transcribe_meeting,
     )

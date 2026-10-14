@@ -9,10 +9,10 @@ import { ProviderBadge } from "@/components/ProviderBadge";
 import { DeleteButton } from "@/components/DeleteButton";
 import { JobsTable } from "@/components/JobsTable";
 import { Pill } from "@/components/Pill";
-import { SegmentsDrawer } from "@/components/SegmentsDrawer";
+import { MeetingTranscript } from "@/components/MeetingTranscript";
 import { SpeakerPanel } from "@/components/SpeakerPanel";
 import { useToast } from "@/components/Toast";
-import { api, audioUrl } from "@/lib/api";
+import { api } from "@/lib/api";
 import { fmtDateTime, fmtDuration } from "@/lib/format";
 import { usePolling } from "@/lib/usePolling";
 import { ACTIVE_STATUSES } from "@/lib/types";
@@ -24,7 +24,8 @@ export default function RecordingPage() {
   const recordingId = decodeURIComponent(id);
   const router = useRouter();
   const { attempt } = useToast();
-  const [showSpeakers, setShowSpeakers] = useState(false);
+  const [expandedSpeakers, setExpandedSpeakers] = useState<Set<string>>(new Set());
+  const [submittingSpeaker, setSubmittingSpeaker] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   // Two calls, so one fetcher: the page has nothing to show until both land.
@@ -55,6 +56,22 @@ export default function RecordingPage() {
       "Transcription started."
     );
     if (job) void refresh();
+  }
+
+  async function transcribeSpeaker(participantId: string, sessionDir: string) {
+    setSubmittingSpeaker(participantId);
+    try {
+      const job = await attempt(() => api.submitJob({
+        type: "transcribe",
+        tracks_output_dir: sessionDir,
+        participant_id: participantId,
+        slice_tracks: false,
+        group_slices_by_name: true,
+      }), "Speaker transcription started.");
+      if (job) await refresh();
+    } finally {
+      setSubmittingSpeaker(null);
+    }
   }
 
   async function forget() {
@@ -106,6 +123,8 @@ export default function RecordingPage() {
   const transcribing = jobs.some(
     (job) => job.type !== "record" && ACTIVE_STATUSES.includes(job.status)
   );
+  const allSpeakersExpanded = recording.participants.length > 0 && recording.participants.every(participant => expandedSpeakers.has(participant.participant_id));
+  const meetingTranscribing = jobs.some(job => job.type !== "record" && !job.params.participant_id && ACTIVE_STATUSES.includes(job.status));
   const hasTranscript =
     Boolean(recording.meeting_transcript_text) ||
     recording.participants.some((participant) => participant.transcript_text);
@@ -125,9 +144,9 @@ export default function RecordingPage() {
       <p>
         <Link href="/recordings"><Icon name="arrow-left" /> All recordings</Link>
       </p>
-      <h1>{recording.meeting_url || "Meeting"}</h1>
-      <p className="subtitle mono">{recording.id}</p>
-      <p className="mono folder-path">{recording.session_dir}</p>
+      <h1 className="recording-heading">Meeting URL: {recording.meeting_url || "-"}</h1>
+      <p className="subtitle mono recording-id">ID: {recording.id}</p>
+      <p className="mono folder-path recording-disk-path">Disk path: {recording.session_dir}</p>
 
       <section className="panel">
         <dl className="meta-grid">
@@ -160,7 +179,7 @@ export default function RecordingPage() {
         </dl>
 
         <details className="drawer" style={{ marginTop: 16 }}>
-          <summary>Recording files and related jobs</summary>
+          <summary>Files and jobs</summary>
           <div>
             <p className="mono faint">{recording.session_dir}</p>
             <p className="dim" >
@@ -169,27 +188,14 @@ export default function RecordingPage() {
             {jobs.length > 0 && (
               <div className="jobs-table-scroll"><JobsTable jobs={jobs} onChanged={refresh} /></div>
             )}
-            <div className="row" style={{ marginTop: 14 }}>
-              <button className="small danger" onClick={() => void forget()}>
-                Forget this recording
-              </button>
-              <span className="faint">
-                Removes the catalogue entry. The audio on disk is left alone.
-              </span>
-            </div>
           </div>
         </details>
       </section>
 
-      <section className="panel">
-        <div className="section-head">
-          <h2 style={{ margin: 0 }}>Meeting audio and transcript</h2>
-          <span className="faint">
-            one pass over the mixed track: overlaps intact, no speaker names
-          </span>
-          {transcribeButton}
-        </div>
+      <section className="panel" aria-labelledby="recording-actions-heading">
+        <h2 id="recording-actions-heading">Actions</h2>
         <div className="row" style={{ marginBottom: 14 }}>
+          {transcribeButton}
           <DeleteButton
             className="delete-transcription"
             disabled={deleting || transcribing || jobs.some((job) => ACTIVE_STATUSES.includes(job.status)) || ["recording", "processing"].includes(recording.status) || !hasTranscript}
@@ -204,33 +210,40 @@ export default function RecordingPage() {
             Delete recording and transcription
           </DeleteButton>
         </div>
-        {recording.main_track_path && (
-          <audio controls preload="none" src={audioUrl.meeting(recording.id)} />
-        )}
-        <div className={`transcript ${recording.meeting_transcript_text ? "" : "empty-text"}`}>
-          {recording.meeting_transcript_text ||
-            (transcribing
-              ? "Transcribing…"
-              : "Not transcribed. The audio above is here either way — use Transcribe to run "
-                + "whisper over it.")}
+        <div className="row" style={{ marginTop: 14 }}>
+          <button className="small danger" onClick={() => void forget()}>
+            Forget this recording
+          </button>
+          <span className="faint">
+            Removes the catalogue entry. The audio on disk is left alone.
+          </span>
         </div>
-        <SegmentsDrawer segments={recording.meeting_transcript_segments} />
       </section>
+
+      <MeetingTranscript key={recording.id} recording={recording} transcribing={meetingTranscribing} />
 
       <div className="section-head">
         <h2 style={{ margin: 0 }}>Speaker transcripts ({recording.participants.length})</h2>
-        <button className="small" aria-expanded={showSpeakers} onClick={() => setShowSpeakers(!showSpeakers)}>{showSpeakers ? "Collapse speakers" : "Show all speakers"}</button>
+        <button className="small" aria-expanded={allSpeakersExpanded} onClick={() => setExpandedSpeakers(new Set(allSpeakersExpanded ? [] : recording.participants.map(participant => participant.participant_id)))}>{allSpeakersExpanded ? "Collapse speakers" : "Show all speakers"}</button>
       </div>
       {recording.participants.length ? (
         recording.participants.map((participant) => (
-          <details className="speaker-details" key={participant.participant_id} open={showSpeakers}>
-          <summary>{participant.participant_name || participant.participant_id}</summary>
           <SpeakerPanel
             key={participant.participant_id}
             recording={recording}
             participant={participant}
+            expanded={expandedSpeakers.has(participant.participant_id)}
+            onExpandedChange={expanded => setExpandedSpeakers(current => {
+              if (current.has(participant.participant_id) === expanded) return current;
+              const next = new Set(current);
+              if (expanded) next.add(participant.participant_id);
+              else next.delete(participant.participant_id);
+              return next;
+            })}
+            onTranscribe={() => void transcribeSpeaker(participant.participant_id, recording.session_dir)}
+            transcribing={submittingSpeaker === participant.participant_id || jobs.some(job => job.type === "transcribe" && ACTIVE_STATUSES.includes(job.status) && (!job.params.participant_id || job.params.participant_id === participant.participant_id))}
+            disabled={deleting || submittingSpeaker !== null || ["recording", "processing"].includes(recording.status)}
           />
-          </details>
         ))
       ) : (
         <div className="empty">

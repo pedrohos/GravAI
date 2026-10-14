@@ -16,7 +16,7 @@ from gravai.transcribe.service import (
 
 # Re-exported so callers keep importing URL detection and its error from the
 # pipeline; the registry owns both.
-__all__ = ["UnsupportedMeetingURL", "detect_recording_type", "record", "transcribe_tracks"]
+__all__ = ["UnsupportedMeetingURL", "detect_recording_type", "record", "transcribe_tracks", "transcribe_participant"]
 
 logger = get_logger("api.pipeline")
 
@@ -69,3 +69,11 @@ def transcribe_tracks(
         # Closes this session's log file. Safe when a job runs this straight
         # after record(): nothing logs against the session after this.
         release_session_logs(tracks_output_dir)
+
+
+def transcribe_participant(session: Session[ParticipantData], session_dir: str) -> TranscriptedSession:
+    """Transcribe one existing aligned/speech track without slicing or touching the mix."""
+    try:
+        return service_transcribe_meeting_tracks(session, transcribe_meeting=False)
+    finally:
+        release_session_logs(session_dir)

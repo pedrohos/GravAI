@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
 
 import { CaptchaBanner } from "@/components/CaptchaBanner";
 import { Icon } from "@/components/Icon";
@@ -11,7 +12,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "GravAI",
   icons: {
-    icon: "/icons/mic.svg",
+    icon: "/icons/app-icon.png",
   },
 };
 
@@ -22,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ToastProvider>
           <header className="topbar">
             <Link className="brand" href="/jobs">
-              <Icon name="record-dot" />
+              <Image src="/icons/app-icon.png" alt="" width={28} height={28} className="app-icon" />
               <span>GravAI</span>
             </Link>
             <Tabs />

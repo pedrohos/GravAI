@@ -1,86 +1,59 @@
+"use client";
+
+import { useMemo } from "react";
 import { Icon } from "@/components/Icon";
 import { audioUrl } from "@/lib/api";
-import { fmtClock, fmtDuration } from "@/lib/format";
+import { fmtDuration } from "@/lib/format";
+import { timedSegments, transcriptForClipboard } from "@/lib/transcript";
 import type { Participant, Recording } from "@/lib/types";
-import { SegmentsDrawer } from "./SegmentsDrawer";
+import { TranscriptPlayer } from "./TranscriptPlayer";
 
-export function SpeakerPanel({
-  recording,
-  participant,
-}: {
+export function SpeakerPanel({ recording, participant, expanded, onExpandedChange, onTranscribe, transcribing, disabled }: {
   recording: Recording;
   participant: Participant;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  onTranscribe: () => void;
+  transcribing: boolean;
+  disabled: boolean;
 }) {
   const name = participant.participant_name || participant.participant_id;
-  const speaking = participant.segments.reduce(
-    (total, segment) => total + (segment.end - segment.start),
-    0
-  );
+  const speaking = participant.segments.reduce((total, segment) => total + segment.end - segment.start, 0);
+  const segments = useMemo(() => timedSegments(participant.transcript_segments), [participant.transcript_segments]);
+  const copyText = useMemo(() => transcriptForClipboard({
+    ...recording,
+    participants: [participant],
+    meeting_transcript_segments: null,
+    meeting_transcript_text: null,
+  }), [recording, participant]);
 
-  return (
-    <section className="speaker">
-      <header>
-        <h3>{name}</h3>
-        <span className="faint">
-          {participant.segments.length} turn{participant.segments.length === 1 ? "" : "s"} ·{" "}
-          {fmtDuration(speaking)} speaking
-        </span>
-      </header>
-
-      <div className="body">
-        <div className={`transcript ${participant.transcript_text ? "" : "empty-text"}`}>
-          {participant.transcript_text || "No transcript for this speaker."}
-        </div>
-
-        <details className="drawer">
-          <summary>audio</summary>
-          <div>
-            <label>
-              Aligned to the meeting — everyone else silenced, so it plays against the others
-            </label>
-            <audio
-              controls
-              preload="none"
-              src={audioUrl.participant(recording.id, participant.participant_id, false)}
-            />
-            {/* The speech-only track is what whisper was actually given: the
-                aligned one is mostly silence, and whisper answers silence with
-                sentences nobody said. */}
-            {participant.speech_track_path && (
-              <>
-                <label style={{ marginTop: 12 }}>
-                  Their turns only — the audio whisper was given
-                </label>
-                <audio
-                  controls
-                  preload="none"
-                  src={audioUrl.participant(recording.id, participant.participant_id, true)}
-                />
-              </>
-            )}
-          </div>
-        </details>
-
-        <details className="drawer">
-          <summary>when they were speaking ({participant.segments.length})</summary>
-          <div className="segments">
-            {participant.segments.length ? (
-              participant.segments.map((segment, index) => (
-                <div className="seg" key={index}>
-                  <time>
-                    {fmtClock(segment.start)} <Icon name="arrow-right" /> {fmtClock(segment.end)}
-                  </time>
-                  <span className="faint">{fmtDuration(segment.end - segment.start)}</span>
-                </div>
-              ))
-            ) : (
-              <p className="faint">None.</p>
-            )}
-          </div>
-        </details>
-
-        <SegmentsDrawer segments={participant.transcript_segments} />
+  return <details className="speaker speaker-details" open={expanded} onToggle={event => onExpandedChange(event.currentTarget.open)}>
+    <summary>
+      <Icon name="chevron-down" />
+      <h3>{name}</h3>
+      <span className="faint">{participant.segments.length} turn{participant.segments.length === 1 ? "" : "s"} · {fmtDuration(speaking)} speaking</span>
+    </summary>
+    {expanded && <div className="body">
+      <div className="speaker-actions">
+        <button type="button" className="small" disabled={disabled || transcribing || !participant.track_path} onClick={onTranscribe}>
+          {transcribing ? "Transcribing..." : participant.transcript_text ? "Transcribe this speaker again" : "Transcribe this speaker"}
+        </button>
       </div>
-    </section>
-  );
+      <TranscriptPlayer
+        audioSrc={participant.track_path ? audioUrl.participant(recording.id, participant.participant_id, false) : undefined}
+        segments={segments}
+        transcriptText={participant.transcript_text}
+        copyText={copyText}
+        emptyText={transcribing ? "Transcribing..." : "No transcript for this speaker."}
+        label={name}
+      />
+      {participant.speech_track_path && <details className="drawer">
+        <summary>Speech-only audio</summary>
+        <div>
+          <p className="dim">This speaker’s turns with silence removed.</p>
+          <audio aria-label={`${name} speech-only audio`} controls preload="none" src={audioUrl.participant(recording.id, participant.participant_id, true)} />
+        </div>
+      </details>}
+    </div>}
+  </details>;
 }
