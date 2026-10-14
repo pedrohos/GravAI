@@ -9,7 +9,7 @@ export const JOB_TYPES: readonly (readonly [JobType, string, string])[] = [
   [
     "record_and_transcribe",
     "Record and transcribe",
-    "Two jobs: a recording, then a transcription that waits for it to finish.",
+    "",
   ],
   ["record", "Record only", "Join and record. Transcribe it later."],
   ["transcribe", "Transcribe a recording", "Re-run slicing and whisper over a directory."],
@@ -66,7 +66,7 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
       <form onSubmit={onSubmit}>
         <div className="row">
           <div className="field">
-            <label htmlFor="job-type">What to do</label>
+            <label htmlFor="job-type">Task type</label>
             <select
               id="job-type"
               value={type}
@@ -78,7 +78,7 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
                 </option>
               ))}
             </select>
-            <div className="hint">{typeHint}</div>
+            {typeHint && <div className="hint">{typeHint}</div>}
           </div>
 
           <div className="field">
@@ -124,7 +124,7 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
                 checked={groupByName}
                 onChange={(event) => setGroupByName(event.target.checked)}
               />
-              Group a speaker&apos;s tiles by display name
+              Group a speaker&apos;s tiles by display name (if unsure, leave marked)
             </label>
           )}
         </div>

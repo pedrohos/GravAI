@@ -303,3 +303,26 @@ button.delete-transcription { background: #303640; color: var(--bad); }
 button.delete-transcription:hover:not(:disabled) { background: #3b424e; border-color: var(--bad); }
 button.delete-both { background: #b91c1c; border-color: #b91c1c; color: #fff; }
 button.delete-both:hover:not(:disabled) { background: #991b1b; border-color: #f87171; }
+
+/* Jobs use the available viewport width while other views keep their reading width. */
+.view:has(.jobs-page) { max-width: none; }
+.jobs-page { width: 100%; }
+.jobs-page .section-head { align-items: center; flex-wrap: wrap; }
+.job-filters select { width: auto; min-width: 160px; border-radius: 999px; padding: 9px 16px; }
+.active-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 12px; padding: 5px 10px 5px 14px; background: var(--bg-inset); }
+.filter-chip button { border: 0; background: transparent; color: inherit; padding: 0 4px; font-size: 20px; line-height: 1; }
+.filter-chip button:focus-visible { outline: 2px solid currentColor; }
+.job-kind { display: inline-flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-weight: 600; background: var(--bg-inset); }
+.job-kind-record { color: var(--bad); border-color: var(--bad); }
+.job-kind-transcribe { color: var(--busy); border-color: var(--busy); }
+.job-status .pill { text-transform: uppercase; }
+a.open-recording { display: inline-block; font-size: 12px; font-weight: 600; white-space: nowrap; }
+a.open-recording:hover { text-decoration: none; border-color: var(--accent); }
+.jobs-table-scroll { overflow-x: auto; }
+.jobs-table-scroll table { min-width: 720px; }
+@media (max-width: 600px) {
+  .jobs-page .panel { padding: 16px; }
+  .job-filters { margin-left: 0; width: 100%; }
+  .job-filters select { flex: 1; min-width: 130px; }
+}

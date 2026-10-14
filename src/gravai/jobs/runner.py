@@ -34,7 +34,7 @@ from types import FrameType
 from uuid import uuid4
 
 from gravai.api import pipeline
-from gravai.config.logging_config import get_logger
+from gravai.config.logging_config import capture_job_logs, get_logger
 from gravai.jobs import catalogue, stop_signal, store
 from gravai.jobs.models import Job, JobStatus, JobSubmission, JobType
 from gravai.models.common import ParticipantData, RecordingType, Session
@@ -257,6 +257,11 @@ def _start(
 
 
 def _run_job(job_id: str) -> None:
+    with capture_job_logs(job_id):
+        _run_job_process(job_id)
+
+
+def _run_job_process(job_id: str) -> None:
     """Entry point of a job process. Runs in its own process group."""
     try:
         os.setsid()

@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 import os
 import sys
 
@@ -101,3 +103,27 @@ def release_session_logs(log_dir: str) -> None:
         if logger_name.endswith(f"{_SCOPE_SEP}{session_key}"):
             logging.getLogger(logger_name).removeHandler(handler)
     handler.close()
+
+
+def job_log_path(job_id: str) -> str:
+    """Keep each job's output separate even when jobs share a session."""
+    return os.path.join(
+        os.path.dirname(os.path.abspath(get_settings().DATABASE_PATH)),
+        "job_logs",
+        f"{job_id}.log",
+    )
+
+
+@contextmanager
+def capture_job_logs(job_id: str) -> Iterator[None]:
+    """Capture all GravAI messages from this dedicated worker process."""
+    path = job_log_path(job_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    root = logging.getLogger(_ROOT_NAME)
+    handler = _build_handler(logging.FileHandler(path))
+    root.addHandler(handler)
+    try:
+        yield
+    finally:
+        root.removeHandler(handler)
+        handler.close()

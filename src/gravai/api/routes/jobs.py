@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from gravai.api.routes.errors import handled
 from gravai.api.schemas import JobLog
-from gravai.config.logging_config import get_logger
+from gravai.config.logging_config import get_logger, job_log_path
 from gravai.config.settings import get_settings
 from gravai.jobs import runner, store
 from gravai.jobs.models import Job, JobStatus, JobSubmission, JobType
@@ -109,21 +109,16 @@ def job_log(
     job_id: str,
     lines: int | None = Query(default=None, ge=1, le=10_000),
 ) -> JobLog:
-    """The tail of the session log a job is writing.
-
-    This is the only way to watch a recording while it happens - what it found in
-    the green room, whether it was admitted, whether it is waiting on a CAPTCHA -
-    since the job itself says nothing until it is finished. Empty until the
-    recorder has a session directory, which is the first thing it makes.
-    """
+    """The tail of this job worker's log, isolated from other jobs."""
     job = store.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"No job with id {job_id}.")
 
-    if not job.session_dir:
-        return JobLog(job_id=job_id)
-
-    log_path = os.path.join(job.session_dir, "session.log")
+    log_path = job_log_path(job.id)
+    # Recordings made before per-job logs existed retain their session log.
+    # A transcription must never display that recording's log as its own.
+    if not os.path.exists(log_path) and job.type is JobType.RECORD and job.session_dir:
+        log_path = os.path.join(job.session_dir, "session.log")
     tail = lines or get_settings().JOB_LOG_TAIL_LINES
     return JobLog(
         job_id=job_id,

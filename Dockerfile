@@ -37,14 +37,7 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # it on every build.
 ENV UV_LINK_MODE=copy
 
-# The lock file and nothing else, so that the dependency layer is invalidated by
-# a dependency change and not by editing a source file. --no-install-project
-# leaves gravai itself out of it for the same reason: it is the half that
-# changes every build, and installing it here would drag the browser downloads
-# below back through the cache with it.
-# The cache mount carries uv's own download cache between builds, so even a
-# genuine dependency change re-downloads only what actually changed.
-COPY pyproject.toml uv.lock README.md /app/
+COPY pyproject.toml uv.lock /app/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
@@ -52,7 +45,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Called through the venv on PATH rather than `uv run`, which would sync first
 # and fail on a project whose source is not copied in yet.
 RUN playwright install-deps
-RUN playwright install
+# Cache downloads across dependency-layer rebuilds. Cache mounts are not part
+# of the image, so copy the installed browsers into their runtime location.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN --mount=type=cache,id=gravai-playwright,target=/root/.cache/ms-playwright,sharing=locked \
+    PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright playwright install && \
+    mkdir -p /opt/ms-playwright && \
+    cp -a /root/.cache/ms-playwright/. /opt/ms-playwright/
 # Meet refuses bundled Chromium at ResolveMeetingSpace even behind a complete
 # Windows persona, and admits the branded Google Chrome build behind the same
 # one. The Meet recorder launches channel="chrome", so this is required, not a
@@ -62,6 +61,7 @@ RUN playwright install chrome
 # Last, because it changes on every build. Everything above this line survives a
 # source edit; this layer is the only one that has to be rebuilt for one, and it
 # only installs gravai itself into the environment the layers above prepared.
+COPY README.md /app/
 COPY src /app/src
 
 RUN --mount=type=cache,target=/root/.cache/uv \

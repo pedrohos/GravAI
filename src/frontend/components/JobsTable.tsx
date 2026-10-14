@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { fmtAge } from "@/lib/format";
+import { fmtDateTime } from "@/lib/format";
 import { ACTIVE_STATUSES, type Job } from "@/lib/types";
 import { JobLogDrawer } from "./JobLogDrawer";
 import { Pill } from "./Pill";
@@ -42,10 +42,10 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
     <table>
       <thead>
         <tr>
-          <th>Job</th>
+          <th>JOB TYPE</th>
           <th>Status</th>
           <th>Submitted</th>
-          <th>Meeting</th>
+          <th>Meeting recordings</th>
           <th />
         </tr>
       </thead>
@@ -60,17 +60,17 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
           return (
             <tr key={job.id}>
               <td>
-                <div>{job.type.replaceAll("_", " ")}</div>
-                <div className="faint mono">{job.id.slice(0, 8)}</div>
-                {job.depends_on && (
-                  <div className="faint mono" title={job.depends_on}>
-                    after {job.depends_on.slice(0, 8)}
-                  </div>
-                )}
+                <span className={`job-kind job-kind-${job.type}`}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                    {job.type === "transcribe" ? <><path d="M6 3h9l3 3v15H6z" /><path d="M9 10h6M9 14h6M9 18h4" /></> : <><rect x="3" y="6" width="13" height="12" rx="3" /><path d="m16 10 5-3v10l-5-3" /><circle cx="9.5" cy="12" r="2" fill="currentColor" /></>}
+                  </svg>
+                  {job.type === "transcribe" ? "Transcribe" : "Record"}
+                </span>
+                {job.depends_on && <div className="faint">After recording</div>}
               </td>
 
               <td>
-                <Pill status={job.status} />
+                <span className="job-status"><Pill status={job.status} /></span>
                 {job.error && <div className="faint mono">{job.error.slice(0, 240)}</div>}
                 <JobLogDrawer jobId={job.id} />
                 {job.result && (
@@ -83,12 +83,12 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
                 )}
               </td>
 
-              <td className="dim">{fmtAge(job.created_at)}</td>
+              <td className="dim"><time dateTime={job.created_at}>{fmtDateTime(job.created_at)}</time></td>
 
               <td>
                 {job.recording_id ? (
-                  <Link href={`/recordings/${encodeURIComponent(job.recording_id)}`}>
-                    open recording
+                  <Link className="button small open-recording" href={`/recordings/${encodeURIComponent(job.recording_id)}`}>
+                    OPEN RECORDING
                   </Link>
                 ) : (
                   <span className="faint">—</span>
@@ -120,7 +120,7 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
                     Cancel
                   </button>
                 ) : (
-                  <button className="small danger" onClick={() => void remove(job)}>
+                  <button className="small delete-both" onClick={() => void remove(job)}>
                     Delete
                   </button>
                 )}

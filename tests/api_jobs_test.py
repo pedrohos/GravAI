@@ -383,3 +383,27 @@ def test_participant_audio_serves_stored_format(
     assert response.headers["content-type"] == mime
     assert f'filename="participant{suffix}"' in response.headers["content-disposition"]
     assert response.content == (b"speech audio" if speech_only else b"aligned audio")
+
+
+def test_job_logs_are_separate_for_jobs_sharing_a_recording(client, tmp_path):
+    from gravai.config.logging_config import capture_job_logs, get_logger
+
+    for job_id, kind in (("record-log", JobType.RECORD), ("transcribe-log", JobType.TRANSCRIBE)):
+        store.create_job(job_id, kind, JobParamsDTO())
+        store.attach_session(job_id, "shared-recording", str(tmp_path))
+        with capture_job_logs(job_id):
+            get_logger("test.job").info(f"Only {job_id}")
+    recording = client.get("/jobs/record-log/log").json()
+    transcription = client.get("/jobs/transcribe-log/log").json()
+    assert recording["log_path"] != transcription["log_path"]
+    assert any("Only record-log" in line for line in recording["lines"])
+    assert all("Only transcribe-log" not in line for line in recording["lines"])
+    assert any("Only transcribe-log" in line for line in transcription["lines"])
+    assert all("Only record-log" not in line for line in transcription["lines"])
+
+
+def test_transcription_does_not_use_legacy_recording_log(client, tmp_path):
+    store.create_job("legacy-transcribe", JobType.TRANSCRIBE, JobParamsDTO())
+    store.attach_session("legacy-transcribe", "shared-recording", str(tmp_path))
+    (tmp_path / "session.log").write_text("Recording only\n")
+    assert client.get("/jobs/legacy-transcribe/log").json()["lines"] == []

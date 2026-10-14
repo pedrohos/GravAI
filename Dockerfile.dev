@@ -39,17 +39,24 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # it on every build.
 ENV UV_LINK_MODE=copy
 
-# Copy the minimum neecessary for uv to install deps
-COPY pyproject.toml uv.lock README.md /app/
+COPY pyproject.toml uv.lock /app/
 
 # First run to install dependencies (specially playwright to be run at the next step)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
 
 RUN playwright install-deps
-RUN playwright install
+# Cache downloads across dependency-layer rebuilds. Cache mounts are not part
+# of the image, so copy the installed browsers into their runtime location.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN --mount=type=cache,id=gravai-playwright,target=/root/.cache/ms-playwright,sharing=locked \
+    PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright playwright install && \
+    mkdir -p /opt/ms-playwright && \
+    cp -a /root/.cache/ms-playwright/. /opt/ms-playwright/
 # bundled Chromium is rejected by Meet bot detection, so chrome is used instead
 RUN playwright install chrome
+
+COPY README.md /app/
 
 # Re runs to install project
 RUN --mount=type=cache,target=/root/.cache/uv \
