@@ -37,21 +37,36 @@ const isTrue = (value: string) => value === "True";
 
 export function SettingsForm({ config, onSaved }: { config: ConfigResponse; onSaved: () => void }) {
   const { attempt } = useToast();
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(config.fields.map((field) => [field.name, field.value]))
+  );
+  const [baseline, setBaseline] = useState(values);
+  const dirty = Object.keys(values).some((name) => values[name] !== baseline[name]);
   const [busy, setBusy] = useState(false);
 
   // Reset the form whenever a fresh config arrives - which is what Revert does,
   // by refetching.
   useEffect(() => {
-    setValues(Object.fromEntries(config.fields.map((field) => [field.name, field.value])));
+    const next = Object.fromEntries(config.fields.map((field) => [field.name, field.value]));
+    setValues(next);
+    setBaseline(next);
   }, [config]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (!dirty || busy) return;
     setBusy(true);
-    const saved = await attempt(() => api.updateConfig(values), "Settings saved.");
+    const changes = Object.fromEntries(
+      Object.entries(values).filter(([name, value]) => value !== baseline[name])
+    );
+    const saved = await attempt(() => api.updateConfig(changes), "Settings saved.");
     setBusy(false);
-    if (saved) onSaved();
+    if (saved) {
+      const next = Object.fromEntries(saved.fields.map((field) => [field.name, field.value]));
+      setValues(next);
+      setBaseline(next);
+      onSaved();
+    }
   }
 
   return (
@@ -64,6 +79,7 @@ export function SettingsForm({ config, onSaved }: { config: ConfigResponse; onSa
               <Field
                 key={field.name}
                 field={field}
+                disabled={busy}
                 value={values[field.name] ?? ""}
                 onChange={(value) => setValues((previous) => ({ ...previous, [field.name]: value }))}
               />
@@ -73,10 +89,10 @@ export function SettingsForm({ config, onSaved }: { config: ConfigResponse; onSa
       ))}
 
       <div className="row">
-        <button className="primary" type="submit" disabled={busy}>
+        <button className="primary" type="submit" disabled={busy || !dirty}>
           Save settings
         </button>
-        <button type="button" onClick={onSaved}>
+        <button type="button" disabled={busy || !dirty} onClick={onSaved}>
           Revert
         </button>
       </div>
@@ -88,10 +104,12 @@ function Field({
   field,
   value,
   onChange,
+  disabled,
 }: {
   field: ConfigField;
   value: string;
   onChange: (value: string) => void;
+  disabled: boolean;
 }) {
   const label = (
     <>
@@ -99,29 +117,42 @@ function Field({
       {field.required && <span className="faint"> required</span>}
     </>
   );
-  const hint = field.description ? <div className="hint">{field.description}</div> : null;
+  const descriptionId = `help-${field.name}`;
+  const fieldLabel = (
+    <div className="setting-label">
+      <label htmlFor={`set-${field.name}`}>{label}</label>
+      {field.description && (
+        <span className="info-tooltip">
+          <button type="button" className="info-trigger" aria-label={`Information about ${field.name}`} aria-describedby={descriptionId}>i</button>
+          <span id={descriptionId} role="tooltip" className="info-content">{field.description}</span>
+        </span>
+      )}
+    </div>
+  );
 
   if (field.kind === "bool") {
     return (
       <div className="field">
-        <label>{label}</label>
+        {fieldLabel}
         <label className="check">
           <input
+            id={`set-${field.name}`}
+            disabled={disabled}
             type="checkbox"
             checked={isTrue(value)}
             onChange={(event) => onChange(String(event.target.checked ? "True" : "False"))}
           />{" "}
           enabled
         </label>
-        {hint}
       </div>
     );
   }
 
   return (
     <div className="field">
-      <label htmlFor={`set-${field.name}`}>{label}</label>
+      {fieldLabel}
       <input
+        disabled={disabled}
         type={field.secret ? "password" : "text"}
         id={`set-${field.name}`}
         name={field.name}
@@ -132,7 +163,6 @@ function Field({
         placeholder={field.secret && field.is_set ? "unchanged" : ""}
         autoComplete="off"
       />
-      {hint}
     </div>
   );
 }

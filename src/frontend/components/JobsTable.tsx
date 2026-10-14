@@ -1,6 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import { useColumnWidths } from "@/lib/useColumnWidths";
+import { MeetingRecordingLink } from "./MeetingRecordingLink";
 import { api } from "@/lib/api";
 import { fmtDateTime } from "@/lib/format";
 import { ACTIVE_STATUSES, type Job } from "@/lib/types";
@@ -18,6 +19,8 @@ const CANCEL_WARNING =
 
 export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => void }) {
   const { attempt } = useToast();
+  const columns = ["JOB TYPE", "Status", "Submitted", "Meeting recordings", "Actions"];
+  const sizing = useColumnWidths("gravai.jobs.column-widths.v1", columns.length);
 
   if (!jobs.length) return <div className="empty">No jobs yet. Submit one above.</div>;
 
@@ -39,14 +42,29 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
   }
 
   return (
-    <table>
+    <table className="jobs-table" ref={sizing.tableRef} style={sizing.widths ? { width: sizing.widths.reduce((total, width) => total + width, 0) } : undefined}>
+      <colgroup>
+        {columns.map((label, index) => <col key={label} style={{ width: sizing.widths ? sizing.widths[index] : `${[17, 23, 20, 28, 12][index]}%` }} />)}
+      </colgroup>
       <thead>
         <tr>
-          <th>JOB TYPE</th>
-          <th>Status</th>
-          <th>Submitted</th>
-          <th>Meeting recordings</th>
-          <th />
+          {columns.map((label, index) => (
+            <th key={label} scope="col">
+              {label}
+              <button
+                type="button"
+                className="column-resizer"
+                aria-label={`Resize ${label} column`}
+                title="Drag to resize; use arrow keys when focused"
+                onPointerDown={(event) => sizing.onPointerDown(index, event)}
+                onPointerMove={sizing.onPointerMove}
+                onPointerUp={sizing.onPointerEnd}
+                onPointerCancel={sizing.onPointerEnd}
+                onLostPointerCapture={sizing.onPointerEnd}
+                onKeyDown={(event) => sizing.onKeyDown(index, event)}
+              />
+            </th>
+          ))}
         </tr>
       </thead>
       <tbody>
@@ -60,13 +78,15 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
           return (
             <tr key={job.id}>
               <td>
+                <div className="job-type-cell">
                 <span className={`job-kind job-kind-${job.type}`}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                     {job.type === "transcribe" ? <><path d="M6 3h9l3 3v15H6z" /><path d="M9 10h6M9 14h6M9 18h4" /></> : <><rect x="3" y="6" width="13" height="12" rx="3" /><path d="m16 10 5-3v10l-5-3" /><circle cx="9.5" cy="12" r="2" fill="currentColor" /></>}
                   </svg>
                   {job.type === "transcribe" ? "Transcribe" : "Record"}
                 </span>
-                {job.depends_on && <div className="faint">After recording</div>}
+                {job.depends_on && <div className="faint job-dependency">After recording</div>}
+                </div>
               </td>
 
               <td>
@@ -86,16 +106,11 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
               <td className="dim"><time dateTime={job.created_at}>{fmtDateTime(job.created_at)}</time></td>
 
               <td>
-                {job.recording_id ? (
-                  <Link className="button small open-recording" href={`/recordings/${encodeURIComponent(job.recording_id)}`}>
-                    OPEN RECORDING
-                  </Link>
-                ) : (
-                  <span className="faint">—</span>
-                )}
+                <MeetingRecordingLink job={job} />
                 <div
                   className="faint mono"
-                  style={{ maxWidth: "34ch", overflow: "hidden", textOverflow: "ellipsis" }}
+                  title={target}
+                  style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 8 }}
                 >
                   {target}
                 </div>

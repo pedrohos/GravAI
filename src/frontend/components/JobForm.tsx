@@ -63,8 +63,8 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
   return (
     <section className="panel">
       <h2>New job</h2>
-      <form onSubmit={onSubmit}>
-        <div className="row">
+      <form className="job-form" onSubmit={onSubmit}>
+        <div className="row job-fields">
           <div className="field">
             <label htmlFor="job-type">Task type</label>
             <select
