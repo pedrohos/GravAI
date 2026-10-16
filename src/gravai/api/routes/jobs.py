@@ -7,6 +7,10 @@ to - for the result, for the log while it is still going, and to end it early.
 """
 
 import os
+from pathlib import Path
+from uuid import uuid4
+
+from pydantic import BaseModel
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -20,6 +24,29 @@ from gravai.jobs.models import Job, JobStatus, JobSubmission, JobType
 logger = get_logger("api.jobs")
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+class RecordingDirectoryRequest(BaseModel):
+    path: str
+    existing: bool = False
+
+
+@router.get("/recording-directory")
+def suggest_recording_directory() -> dict[str, str]:
+    with handled("GET /jobs/recording-directory", "recording directory"):
+        base = Path(get_settings().SAVE_DIR).expanduser()
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise runner.JobError(f"Recording directory is not writable: {base}: {exc}") from exc
+        path = base / f"recording_{uuid4().hex}_tracks"
+        return {"path": runner.validate_recording_directory(str(path))}
+
+
+@router.post("/recording-directory/validate")
+def validate_recording_directory(request: RecordingDirectoryRequest) -> dict[str, str]:
+    with handled("POST /jobs/recording-directory/validate", request.path):
+        return {"path": runner.validate_recording_directory(request.path, existing=request.existing)}
 
 
 @router.post("", response_model=Job, status_code=status.HTTP_202_ACCEPTED)

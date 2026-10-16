@@ -93,6 +93,11 @@ const query = (params: Record<string, string | number | undefined>) => {
 };
 
 export const api = {
+  suggestRecordingDirectory: () => request<{ path: string }>("/jobs/recording-directory"),
+  validateRecordingDirectory: (path: string, existing: boolean) =>
+    request<{ path: string }>("/jobs/recording-directory/validate", {
+      method: "POST", body: JSON.stringify({ path, existing }),
+    }),
   submitJob: (submission: JobSubmission) =>
     request<Job>("/jobs", { method: "POST", body: JSON.stringify(submission) }),
   listJobs: (filters: { status?: string; type?: string } = {}) =>

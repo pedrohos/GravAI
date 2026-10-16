@@ -407,3 +407,123 @@ def test_transcription_does_not_use_legacy_recording_log(client, tmp_path):
     store.attach_session("legacy-transcribe", "shared-recording", str(tmp_path))
     (tmp_path / "session.log").write_text("Recording only\n")
     assert client.get("/jobs/legacy-transcribe/log").json()["lines"] == []
+
+
+def test_recording_directory_validation_rejects_existing_paths(client, tmp_path):
+    destination = tmp_path / "recording_tracks"
+    destination.write_text("keep me")
+    response = client.post("/jobs/recording-directory/validate", json={"path": str(destination)})
+    assert response.status_code == 400
+    assert "already exists" in response.json()["detail"]
+    assert destination.read_text() == "keep me"
+
+
+def test_recording_directory_validation_checks_parent(client, tmp_path):
+    response = client.post("/jobs/recording-directory/validate", json={"path": str(tmp_path / "missing" / "recording_tracks")})
+    assert response.status_code == 400
+    destination = tmp_path / "recording_tracks"
+    response = client.post("/jobs/recording-directory/validate", json={"path": str(destination)})
+    assert response.status_code == 200
+    assert response.json()["path"] == str(destination)
+    assert not destination.exists()
+
+
+def test_recording_directory_validation_reports_write_failure(client, tmp_path, monkeypatch):
+    def denied(**kwargs):
+        raise PermissionError("Permission denied")
+    monkeypatch.setattr("gravai.jobs.runner.tempfile.TemporaryFile", denied)
+    response = client.post("/jobs/recording-directory/validate", json={"path": str(tmp_path / "recording_tracks")})
+    assert response.status_code == 400
+    assert "not writable" in response.json()["detail"]
+
+
+def test_submission_rejects_existing_recording_directory_before_creating_jobs(client, tmp_path):
+    destination = tmp_path / "recording_tracks"
+    destination.touch()
+    response = client.post("/jobs", json={"type": "record_and_transcribe", "meeting_url": "https://meet.google.com/abc-defg-hij", "tracks_output_dir": str(destination)})
+    assert response.status_code == 400
+    assert "already exists" in response.json()["detail"]
+    assert client.get("/jobs").json() == []
+
+
+def test_transcribe_directory_validation_accepts_existing_directory(client, tmp_path):
+    response = client.post("/jobs/recording-directory/validate", json={"path": str(tmp_path), "existing": True})
+    assert response.status_code == 200
+    assert response.json()["path"] == str(tmp_path)
+    response = client.post("/jobs/recording-directory/validate", json={"path": str(tmp_path / "missing"), "existing": True})
+    assert response.status_code == 400
+
+
+def test_suggested_recording_directory_is_valid_and_new(client, tmp_path, monkeypatch):
+    from gravai.config.settings import get_settings
+    monkeypatch.setattr(get_settings(), "SAVE_DIR", str(tmp_path))
+    response = client.get("/jobs/recording-directory")
+    assert response.status_code == 200
+    path = response.json()["path"]
+    assert path.startswith(str(tmp_path))
+    assert client.post("/jobs/recording-directory/validate", json={"path": path}).status_code == 200
+
+
+def test_recording_directory_reaches_record_job(client, tmp_path, monkeypatch):
+    from gravai.jobs import runner
+    def start(job_type, params, **kwargs):
+        return store.create_job("directory-" + job_type.value, job_type, params, **kwargs)
+    monkeypatch.setattr(runner, "_start", start)
+    destination = str(tmp_path / "new_tracks")
+    response = client.post("/jobs", json={"type": "record_and_transcribe", "meeting_url": "https://meet.google.com/abc-defg-hij", "tracks_output_dir": destination})
+    assert response.status_code == 202
+    assert response.json()["params"]["tracks_output_dir"] == destination
+
+
+def test_suggested_directory_initializes_configured_recording_root(client, tmp_path, monkeypatch):
+    from pathlib import Path
+    from gravai.config.settings import get_settings
+    root = tmp_path / "recordings"
+    monkeypatch.setattr(get_settings(), "SAVE_DIR", str(root))
+    response = client.get("/jobs/recording-directory")
+    assert response.status_code == 200
+    destination = Path(response.json()["path"])
+    assert destination.parent == root
+    assert root.is_dir()
+    assert not destination.exists()
+
+
+def test_suggested_directory_is_the_exact_recorder_destination(client, tmp_path, monkeypatch):
+    from gravai.api import pipeline
+    from gravai.config.logging_config import release_session_logs
+    from gravai.config.settings import get_settings
+    from gravai.recording.providers.meet.provider import MeetMeetingRecorder
+    monkeypatch.setattr(get_settings(), "SAVE_DIR", str(tmp_path))
+    destination = client.get("/jobs/recording-directory").json()["path"]
+
+    # Stop before browser/audio startup, while exercising real recorder setup
+    # through both the pipeline and recording service.
+    def capture(self, meeting_url, output_dir=None, debug=False, on_session_start=None, recording_directory=None):
+        _, directory, _, queue = self.setup(output_dir, recording_directory)
+        queue.close()
+        release_session_logs(directory)
+        return directory
+
+    monkeypatch.setattr(MeetMeetingRecorder, "record_meeting_with_audio_capture", capture)
+    directory, _, _ = pipeline.record("https://meet.google.com/abc-defg-hij", slice_tracks=False, recording_directory=destination)
+    assert directory == destination
+    assert client.post("/jobs/recording-directory/validate", json={"path": destination, "existing": True}).status_code == 200
+    assert client.post("/jobs/recording-directory/validate", json={"path": destination}).status_code == 400
+
+
+@pytest.mark.parametrize("job_type", ["record", "record_and_transcribe"])
+def test_directory_created_after_validation_blocks_submission(client, tmp_path, monkeypatch, job_type):
+    from gravai.jobs import runner
+    destination = tmp_path / "new_tracks"
+    validation = client.post("/jobs/recording-directory/validate", json={"path": str(destination)})
+    assert validation.status_code == 200
+    destination.mkdir()
+
+    def forbidden_start(*args, **kwargs):
+        pytest.fail("An invalid destination must never start a job")
+
+    monkeypatch.setattr(runner, "_start", forbidden_start)
+    response = client.post("/jobs", json={"type": job_type, "meeting_url": "https://meet.google.com/abc-defg-hij", "tracks_output_dir": validation.json()["path"]})
+    assert response.status_code == 400
+    assert "already exists" in response.json()["detail"]
+    assert client.get("/jobs").json() == []

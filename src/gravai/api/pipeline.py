@@ -25,11 +25,13 @@ def record(
     meeting_url: str,
     slice_tracks: bool = True,
     on_session_start: Callable[[str, str], None] | None = None,
+    recording_directory: str | None = None,
 ) -> tuple[str, str | None, Session[ParticipantData] | None]:
     recording_type = detect_recording_type(meeting_url)
 
     tracks_output_dir = service_record_meeting(
-        recording_type, meeting_url, on_session_start=on_session_start
+        recording_type, meeting_url, on_session_start=on_session_start,
+        **({"recording_directory": recording_directory} if recording_directory else {}),
     )
     try:
         if not slice_tracks:

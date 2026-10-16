@@ -25,7 +25,7 @@ class JobSubmission(BaseModel):
 
     type: JobType
     meeting_url: str | None = None
-    # For TRANSCRIBE: a directory a previous recording wrote.
+    # Recording destination, or an existing recording directory for TRANSCRIBE.
     tracks_output_dir: str | None = None
     # Optional: transcribe only this catalogued speaker, keeping the mix and other speakers.
     participant_id: str | None = None

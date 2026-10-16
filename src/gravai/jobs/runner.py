@@ -27,6 +27,8 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import signal
+import tempfile
+from pathlib import Path
 import time
 from collections.abc import Callable
 from multiprocessing.process import BaseProcess
@@ -151,6 +153,32 @@ def _process_alive(pid: int | None, pid_start: int | None = None) -> bool:
 # --- submitting ------------------------------------------------------------
 
 
+def validate_recording_directory(value: str, existing: bool = False) -> str:
+    """Check a recording directory using the API worker's filesystem access."""
+    if not value.strip():
+        raise JobError("Give a recording directory.")
+    path = Path(os.path.abspath(os.path.expanduser(value.strip())))
+    if existing:
+        if not path.is_dir():
+            raise JobError(f"No such recording directory: {path}")
+    elif os.path.lexists(path):
+        raise JobError(f"Recording directory already exists: {path}")
+    try:
+        if not path.parent.is_dir():
+            raise JobError(f"Output directory does not exist: {path.parent}")
+        if existing:
+            with tempfile.TemporaryFile(dir=path):
+                pass
+        else:
+            # Test directory creation and file writes, as the recorder needs both.
+            with tempfile.TemporaryDirectory(dir=path.parent) as probe:
+                with tempfile.TemporaryFile(dir=probe):
+                    pass
+    except (OSError, ValueError) as exc:
+        raise JobError(f"Recording directory is not writable: {path}: {exc}") from exc
+    return str(path)
+
+
 def _validate(submission: JobSubmission) -> JobParamsDTO:
     """Validate the combination before creating a database row or process."""
     if submission.participant_id is not None and submission.type is not JobType.TRANSCRIBE:
@@ -168,6 +196,8 @@ def _validate(submission: JobSubmission) -> JobParamsDTO:
         )
         if submission.type is JobType.RECORD_AND_TRANSCRIBE:
             params.group_slices_by_name = submission.group_slices_by_name
+        if submission.tracks_output_dir is not None:
+            params.tracks_output_dir = validate_recording_directory(submission.tracks_output_dir)
         return params
     if not submission.tracks_output_dir:
         raise JobError("A transcribe job needs tracks_output_dir.")
@@ -221,6 +251,7 @@ def submit(submission: JobSubmission) -> Job:
     record = _start(
         JobType.RECORD,
         JobParamsDTO(
+            tracks_output_dir=params.tracks_output_dir,
             meeting_url=params.meeting_url,
             provider=params.provider,
             slice_tracks=params.slice_tracks,
@@ -475,6 +506,7 @@ def _run_record(job: Job, params: JobParamsDTO) -> JobResultDTO:
         meeting_url,
         slice_tracks=params.slice_tracks,
         on_session_start=_session_hook(job.id, meeting_url, provider),
+        **({"recording_directory": params.tracks_output_dir} if params.tracks_output_dir else {}),
     )
 
     if session is not None:

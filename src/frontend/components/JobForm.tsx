@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { api } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, messageOf } from "@/lib/api";
 import type { JobSubmission, JobType } from "@/lib/types";
 import { useToast } from "./Toast";
 
@@ -27,6 +27,28 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
   const { toast, attempt } = useToast();
   const [type, setType] = useState<JobType>("record_and_transcribe");
   const [target, setTarget] = useState("");
+  const [recordingDir, setRecordingDir] = useState("");
+  const [directoryLoading, setDirectoryLoading] = useState(true);
+  const [directoryError, setDirectoryError] = useState("");
+  const submitting = useRef(false);
+  const directoryKey = `${type}:${recordingDir.trim()}`;
+  const currentDirectoryKey = useRef(directoryKey);
+  currentDirectoryKey.current = directoryKey;
+  const pendingValidation = useRef<{
+    key: string;
+    promise: Promise<{ path: string } | null>;
+  } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void attempt(() => api.suggestRecordingDirectory()).then((result) => {
+      if (active) {
+        if (result) setRecordingDir((current) => current || result.path);
+        setDirectoryLoading(false);
+      }
+    });
+    return () => { active = false; };
+  }, [attempt]);
   const [sliceTracks, setSliceTracks] = useState(true);
   const [groupByName, setGroupByName] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -35,28 +57,66 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
   const isTranscribe = type === "transcribe";
   const typeHint = JOB_TYPES.find(([value]) => value === type)?.[2] ?? "";
 
+  function validateDirectory() {
+    const key = directoryKey;
+    if (pendingValidation.current?.key === key) return pendingValidation.current.promise;
+    const promise = (async () => {
+      try {
+        const result = await api.validateRecordingDirectory(recordingDir.trim(), isTranscribe);
+        if (currentDirectoryKey.current === key) setDirectoryError("");
+        return result;
+      } catch (error) {
+        if (currentDirectoryKey.current === key) {
+          const message = messageOf(error);
+          setDirectoryError(message);
+          toast(message, "bad");
+        }
+        return null;
+      } finally {
+        if (pendingValidation.current?.key === key) pendingValidation.current = null;
+      }
+    })();
+    pendingValidation.current = { key, promise };
+    return promise;
+  }
+
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const value = target.trim();
+    if (submitting.current || directoryLoading) return;
+    const value = (isTranscribe ? recordingDir : target).trim();
     if (!value) {
       toast(isTranscribe ? "Give a recording directory." : "Give a meeting URL.", "bad");
       return;
     }
 
-    const submission: JobSubmission = {
-      type,
-      slice_tracks: sliceTracks,
-      group_slices_by_name: groupByName,
-      ...(isTranscribe ? { tracks_output_dir: value } : { meeting_url: value }),
-    };
-
+    submitting.current = true;
     setBusy(true);
-    const job = await attempt(() => api.submitJob(submission), "Job submitted.");
-    setBusy(false);
-    if (job) {
-      setTarget("");
-      setHint(`Started ${job.id.slice(0, 8)}…`);
-      onSubmitted();
+    try {
+      // Await the same check started by blur before creating any job.
+      const validation = await validateDirectory();
+      if (!validation || currentDirectoryKey.current !== directoryKey) return;
+      setRecordingDir(validation.path);
+      const submission: JobSubmission = {
+        tracks_output_dir: validation.path,
+        type,
+        slice_tracks: sliceTracks,
+        group_slices_by_name: groupByName,
+        ...(!isTranscribe ? { meeting_url: value } : {}),
+      };
+
+      const job = await attempt(() => api.submitJob(submission), "Job submitted.");
+      if (job) {
+        setTarget("");
+        if (!isTranscribe) {
+          const suggestion = await attempt(() => api.suggestRecordingDirectory());
+          if (suggestion) setRecordingDir(suggestion.path);
+        }
+        setHint(`Started ${job.id.slice(0, 8)}…`);
+        onSubmitted();
+      }
+    } finally {
+      submitting.current = false;
+      setBusy(false);
     }
   }
 
@@ -70,7 +130,8 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
             <select
               id="job-type"
               value={type}
-              onChange={(event) => setType(event.target.value as JobType)}
+              disabled={busy}
+              onChange={(event) => { setType(event.target.value as JobType); setDirectoryError(""); }}
             >
               {JOB_TYPES.map(([value, label]) => (
                 <option key={value} value={value}>
@@ -83,24 +144,43 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
 
           <div className="field">
             <label htmlFor="job-target">
-              {isTranscribe ? "Recording directory on the server" : "Meeting URL"}
+              Meeting URL
             </label>
             <input
               type="text"
               id="job-target"
+              disabled={isTranscribe || busy}
               value={target}
               onChange={(event) => setTarget(event.target.value)}
-              placeholder={
-                isTranscribe
-                  ? "/tmp/2026_08_26_…_tracks"
-                  : "https://meet.google.com/… or https://teams.microsoft.com/…"
-              }
+              placeholder="https://meet.google.com/… or https://teams.microsoft.com/…"
             />
-            <div className="hint">
-              {isTranscribe
-                ? "A directory a previous recording wrote. Its path is on every recording's page."
-                : "Google Meet and Microsoft Teams."}
+            <div className="hint">Google Meet and Microsoft Teams.</div>
+            <label htmlFor="job-recording-dir">Recording directory on the server</label>
+            <input
+              id="job-recording-dir"
+              type="text"
+              value={recordingDir}
+              disabled={busy}
+              aria-invalid={Boolean(directoryError)}
+              aria-describedby="job-recording-dir-hint job-recording-dir-error"
+              onChange={(event) => { setRecordingDir(event.target.value); setDirectoryError(""); }}
+              aria-busy={directoryLoading}
+              onBlur={async () => {
+                const entered = recordingDir;
+                if (entered.trim()) {
+                  const result = await validateDirectory();
+                  if (result) setRecordingDir((current) => current === entered ? result.path : current);
+                }
+              }}
+            />
+            <div className="hint" id="job-recording-dir-hint">
+              {directoryLoading
+                ? "Loading recording directory…"
+                : isTranscribe
+                  ? "Directory created by a previous recording."
+                  : "The recording will be saved in this exact directory."}
             </div>
+            {directoryError && <div id="job-recording-dir-error" className="field-error" role="alert">{directoryError}</div>}
           </div>
         </div>
 
@@ -130,7 +210,7 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
         </div>
 
         <div className="row">
-          <button className="primary" type="submit" disabled={busy}>
+          <button className="primary" type="submit" disabled={busy || directoryLoading || !recordingDir.trim()}>
             Submit job
           </button>
           <span className="faint">{hint}</span>

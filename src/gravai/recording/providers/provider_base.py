@@ -65,6 +65,7 @@ class MeetingRecorder(BaseModel, ABC):
         output_dir: str | None = None,
         debug: bool = False,
         on_session_start: Callable[[str, str], None] | None = None,
+        recording_directory: str | None = None,
     ) -> str:
         """Records one meeting, its audio taken from a sink of its own.
 
@@ -83,7 +84,7 @@ class MeetingRecorder(BaseModel, ABC):
         """
         settings = get_settings()
 
-        session_id, tracks_output_dir, ctx, q = self.setup(output_dir or settings.SAVE_DIR)
+        session_id, tracks_output_dir, ctx, q = self.setup(output_dir or settings.SAVE_DIR, recording_directory)
         logger = get_logger("recording.teams", tracks_output_dir)
         logger.info(f"Setup complete for session {session_id} (meeting_url={meeting_url}, output_dir={tracks_output_dir})")
 
@@ -163,7 +164,7 @@ class MeetingRecorder(BaseModel, ABC):
             raise
 
 
-    def setup(self, output_dir: str) -> tuple[str, str, SpawnContext, Queue[RecorderResult]]:
+    def setup(self, output_dir: str, recording_directory: str | None = None) -> tuple[str, str, SpawnContext, Queue[RecorderResult]]:
         # A context instead of set_start_method(force=True): the global start
         # method is process-wide, so setting it per recording would race with any
         # other recording starting at the same time.
@@ -177,7 +178,10 @@ class MeetingRecorder(BaseModel, ABC):
         session_prefix = datetime.today().strftime("%Y_%m_%d")
         session_id = f"{session_prefix}_{uuid4()!s}"
 
-        tracks_output_dir = f"{output_dir}/{session_id}_tracks"
+        tracks_output_dir = recording_directory or f"{output_dir}/{session_id}_tracks"
+        if recording_directory:
+            # Reserve the requested destination without reusing an existing directory.
+            os.mkdir(tracks_output_dir)
 
         get_logger("recording.base", tracks_output_dir).info(
             f"Setup started at {datetime.now().isoformat()} for session {session_id}"

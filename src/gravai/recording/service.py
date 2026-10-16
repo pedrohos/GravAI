@@ -14,6 +14,7 @@ def record_meeting(
     output_dir: str | None = None,
     debug: bool = False,
     on_session_start: Callable[[str, str], None] | None = None,
+    recording_directory: str | None = None,
 ) -> str:
     """Records one meeting end to end.
 
@@ -38,4 +39,5 @@ def record_meeting(
         output_dir=output_dir,
         debug=debug,
         on_session_start=on_session_start,
+        **({"recording_directory": recording_directory} if recording_directory else {}),
     )

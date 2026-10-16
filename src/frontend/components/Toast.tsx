@@ -48,7 +48,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast, attempt }}>
       {children}
-      {current && <div id="toast" className={current.kind}>{current.message}</div>}
+      {current && <div id="toast" className={current.kind} role={current.kind === "bad" ? "alert" : "status"}>{current.message}</div>}
     </ToastContext.Provider>
   );
 }
