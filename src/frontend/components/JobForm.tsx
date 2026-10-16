@@ -1,5 +1,8 @@
 "use client";
 
+import { Panel } from "@/components/ui/Panel";
+import { Input, Select, FormField, Checkbox } from "@/components/ui/FormField";
+import { Button } from "@/components/ui/Button";
 import { useEffect, useRef, useState } from "react";
 import { api, messageOf } from "@/lib/api";
 import type { JobSubmission, JobType } from "@/lib/types";
@@ -121,13 +124,11 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
   }
 
   return (
-    <section className="panel">
-      <h2>New job</h2>
+    <Panel title="New job">
       <form className="job-form" onSubmit={onSubmit}>
         <div className="row job-fields">
-          <div className="field">
-            <label htmlFor="job-type">Task type</label>
-            <select
+          <FormField id="job-type" label="Task type" hint={typeHint}>
+            <Select
               id="job-type"
               value={type}
               disabled={busy}
@@ -138,49 +139,43 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
                   {label}
                 </option>
               ))}
-            </select>
-            {typeHint && <div className="hint">{typeHint}</div>}
-          </div>
+            </Select>
+          </FormField>
 
           <div className="field">
-            <label htmlFor="job-target">
-              Meeting URL
-            </label>
-            <input
-              type="text"
-              id="job-target"
-              disabled={isTranscribe || busy}
-              value={target}
-              onChange={(event) => setTarget(event.target.value)}
-              placeholder="https://meet.google.com/… or https://teams.microsoft.com/…"
-            />
-            <div className="hint">Google Meet and Microsoft Teams.</div>
-            <label htmlFor="job-recording-dir">Recording directory on the server</label>
-            <input
+            <FormField id="job-target" label="Meeting URL" hint="Google Meet and Microsoft Teams." className="">
+              <Input
+                type="text"
+                id="job-target"
+                disabled={isTranscribe || busy}
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+                placeholder="https://meet.google.com/… or https://teams.microsoft.com/…"
+              />
+            </FormField>
+            <FormField
               id="job-recording-dir"
-              type="text"
-              value={recordingDir}
-              disabled={busy}
-              aria-invalid={Boolean(directoryError)}
-              aria-describedby="job-recording-dir-hint job-recording-dir-error"
-              onChange={(event) => { setRecordingDir(event.target.value); setDirectoryError(""); }}
-              aria-busy={directoryLoading}
-              onBlur={async () => {
-                const entered = recordingDir;
-                if (entered.trim()) {
-                  const result = await validateDirectory();
-                  if (result) setRecordingDir((current) => current === entered ? result.path : current);
-                }
-              }}
-            />
-            <div className="hint" id="job-recording-dir-hint">
-              {directoryLoading
-                ? "Loading recording directory…"
-                : isTranscribe
-                  ? "Directory created by a previous recording."
-                  : "The recording will be saved in this exact directory."}
-            </div>
-            {directoryError && <div id="job-recording-dir-error" className="field-error" role="alert">{directoryError}</div>}
+              label="Recording directory on the server"
+              className=""
+              error={directoryError}
+              hint={directoryLoading ? "Loading recording directory…" : isTranscribe ? "Directory created by a previous recording." : "The recording will be saved in this exact directory."}
+            >
+              <Input
+                id="job-recording-dir"
+                type="text"
+                value={recordingDir}
+                disabled={busy}
+                onChange={(event) => { setRecordingDir(event.target.value); setDirectoryError(""); }}
+                aria-busy={directoryLoading}
+                onBlur={async () => {
+                  const entered = recordingDir;
+                  if (entered.trim()) {
+                    const result = await validateDirectory();
+                    if (result) setRecordingDir((current) => current === entered ? result.path : current);
+                  }
+                }}
+              />
+            </FormField>
           </div>
         </div>
 
@@ -188,34 +183,30 @@ export function JobForm({ onSubmitted }: { onSubmitted: () => void }) {
           {/* Slicing is only a choice for a record-only job: the full pipeline
               has to slice, because transcription reads what slicing produced. */}
           {type === "record" && (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={sliceTracks}
-                onChange={(event) => setSliceTracks(event.target.checked)}
-              />
+            <Checkbox
+              checked={sliceTracks}
+              onChange={(event) => setSliceTracks(event.target.checked)}
+            >
               Split the mix into one track per speaker
-            </label>
+            </Checkbox>
           )}
           {type !== "record" && (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={groupByName}
-                onChange={(event) => setGroupByName(event.target.checked)}
-              />
+            <Checkbox
+              checked={groupByName}
+              onChange={(event) => setGroupByName(event.target.checked)}
+            >
               Group a speaker&apos;s tiles by display name (if unsure, leave marked)
-            </label>
+            </Checkbox>
           )}
         </div>
 
         <div className="row">
-          <button className="primary" type="submit" disabled={busy || directoryLoading || !recordingDir.trim()}>
+          <Button variant="primary" type="submit" disabled={busy || directoryLoading || !recordingDir.trim()}>
             Submit job
-          </button>
+          </Button>
           <span className="faint">{hint}</span>
         </div>
       </form>
-    </section>
+    </Panel>
   );
 }

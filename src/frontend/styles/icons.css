@@ -1,0 +1,9 @@
+/* Icons styles shared by the corresponding UI components. */
+
+.icon { display: inline-block; flex-shrink: 0; width: 18px; height: 18px; vertical-align: -3px; background-color: currentColor; mask-size: contain; mask-repeat: no-repeat; mask-position: center; background-size: contain; background-repeat: no-repeat; background-position: center; }
+
+.icon-record-dot { width: 20px; height: 20px; }
+
+.icon-record-dot { background-color: var(--bad); mask-size: 120px; }
+
+.app-icon { flex-shrink: 0; object-fit: contain; }

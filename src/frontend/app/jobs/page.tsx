@@ -1,8 +1,10 @@
 "use client";
 
+import { TableScroll } from "@/components/ui/TableScroll";
+import { EmptyState, ErrorMessage } from "@/components/ui/Feedback";
+import { Panel, SectionHeader, PageHeader } from "@/components/ui/Panel";
 import { useState } from "react";
-import { Filters, FilterField } from "@/components/Filters";
-import { Icon } from "@/components/Icon";
+import { Filters, FilterField, FilterChip } from "@/components/Filters";
 import { Dropdown } from "@/components/Dropdown";
 import { Pill } from "@/components/Pill";
 import { TaskTypeBadge } from "@/components/TaskTypeBadge";
@@ -25,16 +27,12 @@ export default function JobsPage() {
 
   return (
     <div className="jobs-page">
-      <h1>Jobs</h1>
-      <p className="subtitle">
-        Record a meeting and transcribe it via a job manager.
-      </p>
+      <PageHeader title="Jobs" subtitle="Record a meeting and transcribe it via a job manager." />
 
       <JobForm onSubmitted={refresh} />
 
-      <section className="panel">
-        <div className="section-head">
-          <h2 style={{ margin: 0 }}>Submitted Jobs</h2>
+      <Panel>
+        <SectionHeader title="Submitted Jobs">
           <Filters>
             <FilterField label="Status">
               <Dropdown label="Filter by status" value={status} onChange={setStatus} options={[
@@ -50,33 +48,27 @@ export default function JobsPage() {
               ]} />
             </FilterField>
           </Filters>
-        </div>
+        </SectionHeader>
 
         {(status || type) && (
           <div className="active-filters" aria-label="Active filters">
             {status && (
-              <span className={`pill filter-chip ${status}`}>
-                Status: {status.toUpperCase()}
-                <button aria-label="Clear status filter" onClick={() => setStatus("")}><Icon name="x" /></button>
-              </span>
+              <FilterChip label="status" className={`pill ${status}`} onClear={() => setStatus("")}>Status: {status.toUpperCase()}</FilterChip>
             )}
             {type && (
-              <span className={`pill filter-chip job-kind-${type}`}>
-                Task: {type.toUpperCase()}
-                <button aria-label="Clear task type filter" onClick={() => setType("")}><Icon name="x" /></button>
-              </span>
+              <FilterChip label="task type" className={`pill job-kind-${type}`} onClear={() => setType("")}>Task: {type.toUpperCase()}</FilterChip>
             )}
           </div>
         )}
-        {error && <div className="error-box">{error}</div>}
+        {error && <ErrorMessage>{error}</ErrorMessage>}
         {loading && !data ? (
-          <div className="empty">Loading…</div>
+          <EmptyState>Loading…</EmptyState>
         ) : (
-          <div className="jobs-table-scroll">
+          <TableScroll>
             <JobsTable jobs={data ?? []} onChanged={refresh} />
-          </div>
+          </TableScroll>
         )}
-      </section>
+      </Panel>
     </div>
   );
 }

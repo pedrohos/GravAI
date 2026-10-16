@@ -1,0 +1,49 @@
+/* Feedback styles shared by the corresponding UI components. */
+
+.empty {
+  padding: 44px 20px;
+  text-align: center;
+  color: var(--text-faint);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.error-box {
+  border: 1px solid var(--bad);
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.08);
+  color: #fecaca;
+  padding: 10px 13px;
+  font-size: 13px;
+  margin-bottom: 14px;
+  white-space: pre-wrap;
+}
+
+#captcha-banner {
+  background: rgba(251, 191, 36, 0.1);
+  border-bottom: 1px solid var(--warn);
+  padding: 12px 24px;
+  font-size: 14px;
+}
+
+#captcha-banner .captcha { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+
+#captcha-banner strong { color: var(--warn); }
+
+#toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 50;
+  max-width: 460px;
+  padding: 11px 15px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  font-size: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+#toast.bad { border-color: var(--bad); color: #fecaca; }
+
+#toast.ok { border-color: var(--ok); }

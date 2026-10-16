@@ -1,3 +1,4 @@
+import { Drawer } from "./ui/Drawer";
 import { Icon } from "@/components/Icon";
 import { fmtClock } from "@/lib/format";
 import type { TranscriptSegment } from "@/lib/types";
@@ -8,9 +9,7 @@ export function SegmentsDrawer({ segments }: { segments: TranscriptSegment[] | n
   if (!segments || !segments.length) return null;
 
   return (
-    <details className="drawer">
-      <summary>transcript with timings ({segments.length})</summary>
-      <div className="segments">
+    <Drawer summary={<>transcript with timings ({segments.length})</>} bodyClassName="segments">
         {segments.map((segment, index) => (
           <div className="seg" key={index}>
             <time>
@@ -19,7 +18,6 @@ export function SegmentsDrawer({ segments }: { segments: TranscriptSegment[] | n
             <span>{(segment.text || "").trim()}</span>
           </div>
         ))}
-      </div>
-    </details>
+    </Drawer>
   );
 }

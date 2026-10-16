@@ -1,0 +1,102 @@
+/* Recordings styles shared by the corresponding UI components. */
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px 24px;
+}
+
+.meta-grid dt { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-faint); }
+
+.meta-grid dd { margin: 3px 0 0; font-size: 14px; word-break: break-word; }
+
+audio { width: 100%; height: 34px; margin-top: 10px; filter: invert(0.9) hue-rotate(180deg); }
+
+.speaker { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; }
+
+.speaker > header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 13px 16px;
+  background: var(--bg-raised);
+  border-radius: var(--radius) var(--radius) 0 0;
+  flex-wrap: wrap;
+}
+
+.speaker > .body { padding: 0 16px; }
+
+.transcript {
+  font-size: 14.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  padding: 12px 0;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.transcript.empty-text { color: var(--text-faint); font-style: italic; }
+
+.segments { max-height: 300px; overflow: auto; }
+
+.segments .seg { display: flex; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+
+.segments .seg:last-child { border-bottom: none; }
+
+.segments .seg time {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text-faint);
+  flex: 0 0 152px;
+  white-space: nowrap;
+}
+
+.segments .seg span { flex: 1; }
+
+a.open-recording { display: inline-block; font-size: 12px; font-weight: 600; white-space: nowrap; }
+
+a.open-recording:hover { text-decoration: none; border-color: var(--accent); }
+
+.recording-link-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 36px; }
+
+.view:has(.recordings-page) { max-width: none; }
+
+.recordings-page { min-width: 0; }
+
+a.open-recording { font-size: 16px; }
+
+.meta-grid dd, .transcript { font-size: 17px; }
+
+.meta-grid dt { font-size: 15px; }
+
+.folder-path, .meeting-title, .transcript { overflow-wrap: anywhere; }
+
+.folder-path, .meeting-title { margin-top: 10px; white-space: normal; }
+
+.speaker-details > summary { cursor: pointer; padding: 14px 16px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); overflow-wrap: anywhere; }
+
+.speaker-details { margin-bottom: 14px; }
+
+@media (max-width: 600px) {
+.segments .seg { flex-wrap: wrap; }
+}
+
+.recording-heading { margin-bottom: 20px; }
+
+.recording-id { margin-bottom: 4px; }
+
+.recording-disk-path { margin-top: 0; margin-bottom: 24px; }
+
+.recording-id, .recording-disk-path { color: var(--text-dim); width: 100%; max-width: none; white-space: normal; overflow-wrap: anywhere; }
+
+.speaker > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; list-style: none; }
+
+.speaker > summary::-webkit-details-marker { display: none; }
+
+.speaker:not([open]) > summary > .icon { transform: rotate(-90deg); }
+
+.speaker > summary h3 { overflow-wrap: anywhere; min-width: 0; }
+
+.speaker > .body { padding: 16px; }
+
+.speaker-actions { display: flex; flex-wrap: wrap; margin-bottom: 12px; }

@@ -1,10 +1,14 @@
 "use client";
 
+import { TableScroll } from "@/components/ui/TableScroll";
+import { EmptyState, ErrorMessage } from "@/components/ui/Feedback";
+import { Panel, SectionHeader } from "@/components/ui/Panel";
+import { Button } from "@/components/ui/Button";
+import { Drawer } from "@/components/ui/Drawer";
 import { Icon } from "@/components/Icon";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
-
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { DeleteButton } from "@/components/DeleteButton";
 import { JobsTable } from "@/components/JobsTable";
@@ -106,7 +110,7 @@ export default function RecordingPage() {
   if (error && !data) {
     return (
       <>
-        <div className="error-box">{error}</div>
+        <ErrorMessage>{error}</ErrorMessage>
         <p>
           <Link href="/recordings"><Icon name="arrow-left" /> All recordings</Link>
         </p>
@@ -114,7 +118,7 @@ export default function RecordingPage() {
     );
   }
 
-  if (loading && !data) return <div className="empty">Loading…</div>;
+  if (loading && !data) return <EmptyState>Loading…</EmptyState>;
   if (!data) return null;
 
   const { recording, jobs } = data;
@@ -130,13 +134,13 @@ export default function RecordingPage() {
     recording.participants.some((participant) => participant.transcript_text);
 
   const transcribeButton = (
-    <button
-      className="small"
+    <Button
+      size="small"
       disabled={transcribing || deleting}
       onClick={() => void transcribeAgain(recording.session_dir)}
     >
       {transcribing ? "Transcribing…" : hasTranscript ? "Transcribe again" : "Transcribe"}
-    </button>
+    </Button>
   );
 
   return (
@@ -148,7 +152,7 @@ export default function RecordingPage() {
       <p className="subtitle mono recording-id">ID: {recording.id}</p>
       <p className="mono folder-path recording-disk-path">Disk path: {recording.session_dir}</p>
 
-      <section className="panel">
+      <Panel>
         <dl className="meta-grid">
           <div>
             <dt>Status</dt>
@@ -178,21 +182,18 @@ export default function RecordingPage() {
           </div>
         </dl>
 
-        <details className="drawer" style={{ marginTop: 16 }}>
-          <summary>Files and jobs</summary>
-          <div>
+        <Drawer summary="Files and jobs" style={{ marginTop: 16 }}>
             <p className="mono faint">{recording.session_dir}</p>
             <p className="dim" >
               Transcribe re-runs slicing and whisper over that directory.
             </p>
             {jobs.length > 0 && (
-              <div className="jobs-table-scroll"><JobsTable jobs={jobs} onChanged={refresh} /></div>
+              <TableScroll><JobsTable jobs={jobs} onChanged={refresh} /></TableScroll>
             )}
-          </div>
-        </details>
-      </section>
+        </Drawer>
+      </Panel>
 
-      <section className="panel" aria-labelledby="recording-actions-heading">
+      <Panel aria-labelledby="recording-actions-heading">
         <h2 id="recording-actions-heading">Actions</h2>
         <div className="row" style={{ marginBottom: 14 }}>
           {transcribeButton}
@@ -211,21 +212,20 @@ export default function RecordingPage() {
           </DeleteButton>
         </div>
         <div className="row" style={{ marginTop: 14 }}>
-          <button className="small danger" onClick={() => void forget()}>
+          <Button size="small" variant="danger" onClick={() => void forget()}>
             Forget this recording
-          </button>
+          </Button>
           <span className="faint">
             Removes the catalogue entry. The audio on disk is left alone.
           </span>
         </div>
-      </section>
+      </Panel>
 
       <MeetingTranscript key={recording.id} recording={recording} transcribing={meetingTranscribing} />
 
-      <div className="section-head">
-        <h2 style={{ margin: 0 }}>Speaker transcripts ({recording.participants.length})</h2>
-        <button className="small" aria-expanded={allSpeakersExpanded} onClick={() => setExpandedSpeakers(new Set(allSpeakersExpanded ? [] : recording.participants.map(participant => participant.participant_id)))}>{allSpeakersExpanded ? "Collapse speakers" : "Show all speakers"}</button>
-      </div>
+      <SectionHeader title={<>Speaker transcripts ({recording.participants.length})</>}>
+        <Button size="small" aria-expanded={allSpeakersExpanded} onClick={() => setExpandedSpeakers(new Set(allSpeakersExpanded ? [] : recording.participants.map(participant => participant.participant_id)))}>{allSpeakersExpanded ? "Collapse speakers" : "Show all speakers"}</Button>
+      </SectionHeader>
       {recording.participants.length ? (
         recording.participants.map((participant) => (
           <SpeakerPanel
@@ -246,10 +246,10 @@ export default function RecordingPage() {
           />
         ))
       ) : (
-        <div className="empty">
+        <EmptyState>
           No speaker tracks. A recording job with slicing turned off, or a meeting where nobody
           was heard.
-        </div>
+        </EmptyState>
       )}
     </>
   );

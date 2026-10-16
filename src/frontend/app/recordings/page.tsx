@@ -1,13 +1,17 @@
 "use client";
 
+import { TableScroll } from "@/components/ui/TableScroll";
+import { DataTable } from "@/components/DataTable";
+import { EmptyState, ErrorMessage } from "@/components/ui/Feedback";
+import { Panel, SectionHeader, PageHeader } from "@/components/ui/Panel";
+import { Button } from "@/components/ui/Button";
 import { Dropdown } from "@/components/Dropdown";
-import { Icon } from "@/components/Icon";
-import { Filters, FilterField } from "@/components/Filters";
+import { Filters, FilterField, FilterChip } from "@/components/Filters";
 import { normalizedStatus, statusLabel } from "@/components/Pill";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { DeleteButton } from "@/components/DeleteButton";
 import { SpeakerList } from "@/components/SpeakerList";
-import { TableHeader, useTableSort } from "@/components/TableControls";
+import { useTableSort } from "@/components/TableControls";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { useState } from "react";
 import { providerOf } from "@/components/ProviderBadge";
@@ -59,21 +63,17 @@ export default function RecordingsPage() {
 
   return (
     <div className="recordings-page">
-      <h1>Recordings</h1>
-      <p className="subtitle">
-        Recording listings and transcriptions.
-      </p>
+      <PageHeader title="Recordings" subtitle="Recording listings and transcriptions." />
 
-      {error && <div className="error-box">{error}</div>}
+      {error && <ErrorMessage>{error}</ErrorMessage>}
 
       {loading && !data ? (
-        <div className="empty">Loading…</div>
+        <EmptyState>Loading…</EmptyState>
       ) : !data || data.length === 0 ? (
-        <div className="empty">Nothing recorded yet. Submit a job from the Jobs page.</div>
+        <EmptyState>Nothing recorded yet. Submit a job from the Jobs page.</EmptyState>
       ) : (
-        <section className="panel">
-          <div className="section-head">
-            <h2 style={{ margin: 0 }}>Recorded meetings</h2>
+        <Panel>
+          <SectionHeader title="Recorded meetings">
             <Filters>
               <FilterField label="Status">
                 <Dropdown label="Filter recordings by status" value={status} onChange={setStatus} options={[
@@ -89,19 +89,17 @@ export default function RecordingsPage() {
                 ]} />
               </FilterField>
             </Filters>
-          </div>
+          </SectionHeader>
           {(status || provider) && (
             <div className="active-filters" aria-label="Active filters">
-              {status && <span className={`pill filter-chip ${status}`}>Status: {statusLabel(status)}<button aria-label="Clear status filter" onClick={() => setStatus("")}><Icon name="x" /></button></span>}
-              {provider && <span className={`pill filter-chip provider-${provider}`}>Provider: {provider === "meet" ? "Meet" : "Teams"}<button aria-label="Clear provider filter" onClick={() => setProvider("")}><Icon name="x" /></button></span>}
+              {status && <FilterChip label="status" className={`pill ${status}`} onClear={() => setStatus("")}>Status: {statusLabel(status)}</FilterChip>}
+              {provider && <FilterChip label="provider" className={`pill provider-${provider}`} onClear={() => setProvider("")}>Provider: {provider === "meet" ? "Meet" : "Teams"}</FilterChip>}
             </div>
           )}
-          {!filtered.length && <p className="empty">No recordings match these filters.</p>}
-          <div className="jobs-table-scroll" tabIndex={0} aria-label="Recordings table">
-          <table className="jobs-table" ref={sizing.tableRef} style={sizing.widths ? { width: sizing.widths.reduce((sum, width) => sum + width, 0) } : undefined}>
-            <colgroup>{columns.map((label, index) => <col key={label} style={{ width: sizing.widths ? sizing.widths[index] : `${[30, 12, 16, 10, 18, 14][index]}%` }} />)}</colgroup>
-            <TableHeader labels={columns} sizing={sizing} sorting={sorting} sortableCount={columns.length - 1} />
-            <tbody>
+          {!filtered.length && <EmptyState>No recordings match these filters.</EmptyState>}
+          <TableScroll tabIndex={0} aria-label="Recordings table">
+          <DataTable columns={columns} defaultWidths={[30, 12, 16, 10, 18, 14]} sizing={sizing} sorting={sorting}>
+      <tbody>
               {sorting.sorted.map((recording) => {
                 const speakers = speakersOf(recording);
                 const transcribed = Boolean(recording.meeting_transcript_text) || recording.participants.some(
@@ -129,18 +127,18 @@ export default function RecordingsPage() {
                       <SpeakerList names={speakers} />
                     </td>
                     <td className="actions">
-                      <button className="small" disabled={["recording", "processing"].includes(recording.status)} onClick={() => void transcribe(recording)}>
+                      <Button size="small" disabled={["recording", "processing"].includes(recording.status)} onClick={() => void transcribe(recording)}>
                         {transcribed ? "Transcribe again" : "Transcribe"}
-                      </button>
+                      </Button>
                       <DeleteButton disabled={["recording", "processing"].includes(recording.status)} onClick={() => void remove(recording)} />
                     </td>
                   </tr>
                 );
               })}
             </tbody>
-          </table>
-          </div>
-        </section>
+          </DataTable>
+          </TableScroll>
+        </Panel>
       )}
     </div>
   );

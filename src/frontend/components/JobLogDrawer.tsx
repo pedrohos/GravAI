@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ACTIVE_STATUSES, type JobStatus } from "@/lib/types";
+import { Drawer } from "./ui/Drawer";
 import { api } from "@/lib/api";
 
 const EMPTY = "No execution log is available yet.";
@@ -49,17 +50,14 @@ export function JobLogDrawer({ jobId, status }: { jobId: string; status: JobStat
   }, [text, open]);
 
   return (
-    <details
-      className={`drawer ${available ? "" : "unavailable"}`}
+    <Drawer
+      summary="Execution log"
+      summaryTitle={available ? "View execution log" : "Open to check for an execution log"}
+      muted={!available}
       open={open}
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary title={available ? "View execution log" : "Open to check for an execution log"}>Execution log</summary>
-      <div>
-        <pre className="log" ref={body}>
-          {text}
-        </pre>
-      </div>
-    </details>
+      <pre className="log" ref={body}>{text}</pre>
+    </Drawer>
   );
 }

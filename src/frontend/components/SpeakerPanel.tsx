@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/Button";
+import { Drawer } from "./ui/Drawer";
 import { useMemo } from "react";
 import { Icon } from "@/components/Icon";
 import { audioUrl } from "@/lib/api";
@@ -35,9 +37,9 @@ export function SpeakerPanel({ recording, participant, expanded, onExpandedChang
     </summary>
     {expanded && <div className="body">
       <div className="speaker-actions">
-        <button type="button" className="small" disabled={disabled || transcribing || !participant.track_path} onClick={onTranscribe}>
+        <Button type="button" className="small" disabled={disabled || transcribing || !participant.track_path} onClick={onTranscribe}>
           {transcribing ? "Transcribing..." : participant.transcript_text ? "Transcribe this speaker again" : "Transcribe this speaker"}
-        </button>
+        </Button>
       </div>
       <TranscriptPlayer
         audioSrc={participant.track_path ? audioUrl.participant(recording.id, participant.participant_id, false) : undefined}
@@ -47,13 +49,10 @@ export function SpeakerPanel({ recording, participant, expanded, onExpandedChang
         emptyText={transcribing ? "Transcribing..." : "No transcript for this speaker."}
         label={name}
       />
-      {participant.speech_track_path && <details className="drawer">
-        <summary>Speech-only audio</summary>
-        <div>
+      {participant.speech_track_path && <Drawer summary="Speech-only audio">
           <p className="dim">This speaker’s turns with silence removed.</p>
           <audio aria-label={`${name} speech-only audio`} controls preload="none" src={audioUrl.participant(recording.id, participant.participant_id, true)} />
-        </div>
-      </details>}
+      </Drawer>}
     </div>}
   </details>;
 }

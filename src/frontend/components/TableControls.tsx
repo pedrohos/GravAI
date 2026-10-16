@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/Button";
 import { Icon } from "./Icon";
 import { useState } from "react";
 import { useColumnWidths } from "@/lib/useColumnWidths";
@@ -23,7 +24,7 @@ export function TableHeader({ labels, sizing, sorting, sortableCount = labels.le
   sortableCount?: number;
 }) {
   return <thead><tr>{labels.map((label, index) => <th key={label} scope="col" aria-sort={index >= sortableCount ? undefined : sorting.sort.index === index ? sorting.sort.descending ? "descending" : "ascending" : "none"}>
-    {index < sortableCount ? <button className="sort-button" onClick={() => sorting.toggle(index)}><span className="sort-label">{label}</span><Icon name={sorting.sort.index === index ? sorting.sort.descending ? "arrow-down" : "arrow-up" : "sort"} /></button> : label}
-    {index < labels.length - 1 && <button type="button" className="column-resizer" aria-label={`Resize ${label} column`} title="Drag to resize; use arrow keys when focused" onPointerDown={event => sizing.onPointerDown(index, event)} onPointerMove={sizing.onPointerMove} onPointerUp={sizing.onPointerEnd} onPointerCancel={sizing.onPointerEnd} onLostPointerCapture={sizing.onPointerEnd} onKeyDown={event => sizing.onKeyDown(index, event)} />}
+    {index < sortableCount ? <Button className="sort-button" onClick={() => sorting.toggle(index)}><span className="sort-label">{label}</span><Icon name={sorting.sort.index === index ? sorting.sort.descending ? "arrow-down" : "arrow-up" : "sort"} /></Button> : label}
+    {index < labels.length - 1 && <Button type="button" className="column-resizer" aria-label={`Resize ${label} column`} title="Drag to resize; use arrow keys when focused" onPointerDown={event => sizing.onPointerDown(index, event)} onPointerMove={sizing.onPointerMove} onPointerUp={sizing.onPointerEnd} onPointerCancel={sizing.onPointerEnd} onLostPointerCapture={sizing.onPointerEnd} onKeyDown={event => sizing.onKeyDown(index, event)} />}
   </th>)}</tr></thead>;
 }

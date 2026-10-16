@@ -1,0 +1,90 @@
+/* Filters styles shared by the corresponding UI components. */
+
+.job-filters select { width: auto; min-width: 160px; border-radius: 999px; padding: 9px 16px; }
+
+.active-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+
+.filter-chip { display: inline-flex; align-items: center; gap: 12px; padding: 5px 10px 5px 14px; background: var(--bg-inset); }
+
+.filter-chip button { border: 0; background: transparent; color: inherit; padding: 0 4px; font-size: 20px; line-height: 1; }
+
+.filter-chip button:focus-visible { outline: 2px solid currentColor; }
+
+@media (max-width: 600px) {
+.job-filters { margin-left: 0; width: 100%; }
+.job-filters select { flex: 1; min-width: 130px; }
+}
+
+.job-filters select {
+  appearance: none;
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  padding-right: 42px;
+}
+
+.job-filters select { height: 42px; }
+
+.filters { border: 0; padding: 0; min-width: 0; margin-top: 0; margin-bottom: 0; }
+
+.filters legend { color: var(--text-dim); font-size: 15px; font-weight: 600; margin-bottom: 7px; padding: 0; }
+
+.filters .job-filters { align-items: center; }
+
+.filters select { min-width: 180px; }
+
+@media (max-width: 600px) {
+.filters { margin-left: 0; width: 100%; }
+}
+
+.job-filters select { background-image: url(/icons/chevron-down.svg); background-size: 16px; }
+
+.filters .job-filters { align-items: flex-end; gap: 16px; }
+
+.filter-field { display: flex; flex-direction: column; gap: 6px; margin: 0; flex: 1 1 220px; }
+
+.filter-field > span { font-weight: 600; }
+
+.filters .filter-field select { width: 100%; min-width: 220px; height: auto; min-height: 46px; line-height: 1.5; padding: 10px 42px 10px 16px; }
+
+.filter-chip button { color: var(--bad); display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; }
+
+@media (max-width: 600px) {
+.filter-field { flex-basis: 100%; }
+.filters .filter-field select { min-width: 0; }
+}
+
+.filter-field { color: var(--text-dim); font-size: 15px; }
+
+.dropdown { position: relative; width: 100%; min-width: 220px; color: var(--text); }
+
+.dropdown-trigger { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 52px; padding: 8px 12px; text-align: left; background: var(--bg-inset); }
+
+.dropdown-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.dropdown-trigger[aria-expanded="true"] { border-color: var(--accent); }
+
+.dropdown-trigger[aria-expanded="true"] > .icon { transform: rotate(180deg); }
+
+.dropdown-value { min-width: 0; overflow-wrap: anywhere; }
+
+.dropdown-options { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: max-content; min-width: 100%; max-width: min(360px, calc(100vw - 48px)); max-height: 320px; overflow-y: auto; list-style: none; margin: 0; padding: 6px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--bg-raised); box-shadow: 0 12px 32px rgba(0,0,0,.4); }
+
+.dropdown-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 46px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+
+.dropdown-option.highlighted { background: var(--accent-dim); }
+
+.dropdown-option[aria-selected="true"] > .icon { color: var(--accent); }
+
+.dropdown .job-kind { font-size: 14px; padding: 4px 8px; border: 1px solid currentColor; border-radius: 6px; }
+
+.dropdown .job-kind-record { color: var(--bad); background: rgba(248, 113, 113, 0.12); }
+
+.dropdown .job-kind-transcribe { color: var(--busy); background: rgba(125, 211, 252, 0.12); }
+
+.dropdown .pill, .dropdown .provider-badge { font-size: 14px; }
+
+@media (max-width: 600px) {
+.dropdown { min-width: 0; }
+}
+
+.pill.filter-all, .provider-badge.filter-all, .job-kind.filter-all { color: var(--accent); border-color: var(--accent); background: rgba(106, 166, 255, 0.12); }

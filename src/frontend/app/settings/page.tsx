@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState, ErrorMessage } from "@/components/ui/Feedback";
 import { SettingsForm } from "@/components/SettingsForm";
 import { api } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
@@ -9,8 +10,8 @@ export default function SettingsPage() {
   // poll would overwrite what they had half-typed. Revert refetches by hand.
   const { data, error, loading, refresh } = usePolling(() => api.getConfig(), null);
 
-  if (error && !data) return <div className="error-box">{error}</div>;
-  if (loading && !data) return <div className="empty">Loading…</div>;
+  if (error && !data) return <ErrorMessage>{error}</ErrorMessage>;
+  if (loading && !data) return <EmptyState>Loading…</EmptyState>;
   if (!data) return null;
 
   return (

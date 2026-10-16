@@ -1,0 +1,62 @@
+/* Drawers styles shared by the corresponding UI components. */
+
+pre.log, pre.json {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 0;
+  max-height: 380px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+details.drawer { border-top: 1px solid var(--border); }
+
+details.drawer > summary {
+  cursor: pointer;
+  padding: 9px 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  list-style: none;
+}
+
+details.drawer > summary::before { content: ""; display: inline-block; width: 16px; height: 16px; margin-right: 6px; vertical-align: -2px; background: currentColor; mask: url(/icons/chevron-right.svg) center / contain no-repeat; }
+
+details.drawer[open] > summary::before { transform: rotate(90deg); }
+
+details.drawer > summary:hover { color: var(--text); }
+
+details.drawer > div { padding-bottom: 14px; }
+
+details.drawer > summary { font-size: 15px; }
+
+pre.log, pre.json { font-size: 15px; overflow-wrap: anywhere; }
+
+pre.log, pre.json { line-height: 1.7; max-height: 480px; }
+
+.result-fields { margin: 0; }
+
+.result-fields > div { padding: 10px 0; border-bottom: 1px solid var(--border); }
+
+.result-fields dt { color: var(--text-dim); font-weight: 600; }
+
+.result-fields dd { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.drawer.unavailable { border-top: 1px solid var(--border); }
+
+.drawer.unavailable > summary, .unavailable-label { color: #788292; cursor: default; }
+
+.drawer.unavailable > summary:hover { color: #788292; }
+
+.unavailable-label { display: block; padding: 9px 0; font-size: 15px; }
+
+.unavailable-label::before { content: ""; display: inline-block; width: 16px; height: 16px; margin-right: 6px; vertical-align: -2px; background: currentColor; mask: url(/icons/chevron-right.svg) center / contain no-repeat; }
+
+.drawer.unavailable > summary { cursor: pointer; }
+
+.drawer.unavailable > summary:hover { color: var(--text-dim); }

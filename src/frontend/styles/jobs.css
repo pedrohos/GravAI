@@ -1,0 +1,32 @@
+/* Jobs styles shared by the corresponding UI components. */
+
+.view:has(.jobs-page) { max-width: none; }
+
+.jobs-page { width: 100%; }
+
+.jobs-page .section-head { align-items: center; flex-wrap: wrap; }
+
+@media (max-width: 600px) {
+.jobs-page .panel { padding: 16px; }
+}
+
+.job-fields { align-items: flex-start; }
+
+.job-form select, .job-form input[type="text"] { height: 42px; }
+
+.job-form select {
+  appearance: none;
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  padding-right: 42px;
+}
+
+.job-type-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+
+.job-dependency { width: 145px; max-width: 100%; text-align: center; font-size: 12px; }
+
+.job-status { display: flex; align-items: center; min-height: 36px; }
+
+.jobs-page { min-width: 0; }
+
+.job-form select { background-image: url(/icons/chevron-down.svg); background-size: 16px; }

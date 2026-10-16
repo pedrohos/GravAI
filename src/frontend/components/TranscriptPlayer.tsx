@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/Button";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { useToast } from "./Toast";
@@ -75,9 +76,9 @@ export function TranscriptPlayer({ audioSrc, segments, transcriptText, copyText,
         pendingSeek.current = null;
       }}
     />}
-    <button type="button" className="small copy-transcript" disabled={!copyText} title="Copy transcript in time order with timings and speaker names" onClick={() => void attempt(() => navigator.clipboard.writeText(copyText), "Transcript copied.")}>
+    <Button type="button" className="small copy-transcript" disabled={!copyText} title="Copy transcript in time order with timings and speaker names" onClick={() => void attempt(() => navigator.clipboard.writeText(copyText), "Transcript copied.")}>
       <Icon name="copy" /> Copy transcript
-    </button>
+    </Button>
     </div>
     {segments.length ? <>
       {audioSrc && <p className="transcript-hint dim">Select a row to seek the audio. The transcript follows playback.</p>}
@@ -92,7 +93,7 @@ export function TranscriptPlayer({ audioSrc, segments, transcriptText, copyText,
             aria-current={index === activeIndex && audioSrc ? "true" : undefined}
             onClick={() => seek(segment.start)}
           >
-            <td>{audioSrc ? <button type="button" className="transcript-seek" aria-label={`Seek audio to ${fmtClock(segment.start)}`}><time>{fmtClock(segment.start)}</time></button> : <time>{fmtClock(segment.start)}</time>}</td>
+            <td>{audioSrc ? <Button type="button" className="transcript-seek" aria-label={`Seek audio to ${fmtClock(segment.start)}`}><time>{fmtClock(segment.start)}</time></Button> : <time>{fmtClock(segment.start)}</time>}</td>
             {showSpeakers && <td>{segment.speakers?.length ? <div className="chips">{segment.speakers.map((name, speakerIndex) => <span className="chip" key={speakerIndex}>{name}</span>)}</div> : <span className="dim">Unknown</span>}</td>}
             <td>{segment.text?.trim() || "—"}</td>
           </tr>)}</tbody>

@@ -1,0 +1,65 @@
+/* Badges styles shared by the corresponding UI components. */
+
+.pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  border: 1px solid transparent;
+}
+
+.pill.queued { color: var(--text-dim); border-color: var(--border-strong); }
+
+.pill.running { color: var(--busy);  border-color: var(--busy); }
+
+.pill.waiting { color: var(--text-dim); border-color: var(--border-strong); }
+
+.pill.stopping { color: var(--warn);  border-color: var(--warn); }
+
+.pill.succeeded, .pill.complete { color: var(--ok);   border-color: var(--ok); }
+
+.pill.failed, .pill.cancelled { color: var(--bad);  border-color: var(--bad); }
+
+.pill.recording { color: var(--bad);  border-color: var(--bad); }
+
+.pill.processing { color: var(--busy); border-color: var(--busy); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.chip {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.job-kind { display: inline-flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 8px; font-weight: 600; background: var(--bg-inset); }
+
+.job-kind-record { color: var(--bad); border-color: var(--bad); }
+
+.job-kind-transcribe { color: var(--busy); border-color: var(--busy); }
+
+.job-status .pill { text-transform: uppercase; }
+
+.job-type-cell .job-kind { justify-content: flex-start; min-height: 36px; width: 145px; max-width: 100%; }
+
+.job-kind svg { flex-shrink: 0; }
+
+.provider-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 4px 8px; border: 1px solid currentColor; border-radius: 6px; white-space: nowrap; }
+
+.provider-meet { color: var(--ok); background: rgba(74, 222, 128, .08); }
+
+.provider-teams { color: #b5a4ff; background: rgba(181, 164, 255, .08); }
+
+.job-type-cell .job-kind { white-space: nowrap; }
+
+.pill, .provider-badge, .chip { font-size: 15px; }
+
+.chip { overflow-wrap: anywhere; }
+
+.chips + button { margin-top: 10px; }

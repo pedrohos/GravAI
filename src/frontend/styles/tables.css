@@ -1,0 +1,74 @@
+table { width: 100%; border-collapse: collapse; font-size: 17px; }
+
+th {
+  text-align: left;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-faint);
+  font-weight: 600;
+  padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+
+tr:last-child td { border-bottom: none; }
+
+td.actions { text-align: right; padding-right: 0; white-space: nowrap; }
+
+td.actions button { margin-left: 6px; }
+
+/* Tables styles shared by the corresponding UI components. */
+
+.table-scroll { overflow-x: auto; }
+
+.table-scroll table { min-width: 720px; }
+
+.data-table { table-layout: fixed; }
+
+.data-table th { position: relative; padding: 0 16px 12px 8px; }
+
+.data-table td { padding: 16px 16px 16px 8px; overflow-wrap: anywhere; }
+
+.data-table td.actions { padding-right: 8px; white-space: normal; }
+
+.data-table td.actions button { margin: 0 0 6px 6px; min-height: 36px; }
+
+.column-resizer {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 12px;
+  border: 0; border-radius: 0; padding: 0; background: transparent;
+  cursor: col-resize; touch-action: none;
+}
+
+.column-resizer::after { content: ""; position: absolute; top: 2px; bottom: 8px; left: 5px; width: 2px; background: var(--border-strong); }
+
+.column-resizer:hover::after, .column-resizer:focus-visible::after { background: var(--accent); }
+
+.column-resizer:focus-visible { outline: 2px solid var(--accent); }
+
+.data-table time { display: block; padding-top: 6px; }
+
+.table-scroll { width: 100%; max-width: 100%; overflow-x: auto; padding-bottom: 8px; }
+
+.table-scroll table { min-width: 1000px; max-width: none; }
+
+.data-table { table-layout: fixed; }
+
+.data-table th, .data-table td { overflow-wrap: anywhere; white-space: normal; }
+
+.sort-button { border: 0; background: transparent; padding: 4px 0; text-align: left; color: var(--text-dim); font-size: inherit; font-weight: inherit; text-transform: uppercase; }
+
+.sort-button:hover { color: var(--accent); }
+
+.sort-button:focus-visible { outline: 2px solid var(--accent); }
+
+.sort-button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+
+.sort-label { min-width: 0; text-align: left; }
+
+.sort-button > .icon { flex-shrink: 0; margin-left: auto; }
+
+.data-table td.actions { text-align: center; padding-left: 8px; padding-right: 8px; }
+
+.data-table td.actions button { margin: 0 3px 6px; }

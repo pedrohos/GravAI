@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/Button";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "./Icon";
 
@@ -73,10 +74,10 @@ export function Dropdown({ label, value, onChange, options }: {
   return <div className="dropdown" ref={root} onBlur={event => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
   }}>
-    <button ref={trigger} type="button" className="dropdown-trigger" role="combobox" aria-label={label} aria-haspopup="listbox" aria-expanded={open} aria-controls={`${id}-options`} aria-activedescendant={open && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined} onKeyDown={onKeyDown} onClick={() => { setActive(Math.max(selected, 0)); setOpen(!open); }}>
+    <Button ref={trigger} type="button" className="dropdown-trigger" role="combobox" aria-label={label} aria-haspopup="listbox" aria-expanded={open} aria-controls={`${id}-options`} aria-activedescendant={open && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined} onKeyDown={onKeyDown} onClick={() => { setActive(Math.max(selected, 0)); setOpen(!open); }}>
       <span className="dropdown-value">{options[selected]?.content ?? "Select an option"}</span>
       <Icon name="chevron-down" />
-    </button>
+    </Button>
     {open && <ul id={`${id}-options`} className="dropdown-options" role="listbox" aria-label={label}>
       {options.map((option, index) => <li id={`${id}-option-${index}`} key={option.value} role="option" aria-selected={option.value === value} className={`dropdown-option ${index === activeIndex ? "highlighted" : ""}`} onPointerMove={() => setActive(index)} onPointerDown={event => event.preventDefault()} onClick={() => choose(index)}>
         <span>{option.content}</span>{option.value === value && <Icon name="check" />}

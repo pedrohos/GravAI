@@ -1,5 +1,6 @@
 "use client";
 
+import { Panel, SectionHeader } from "@/components/ui/Panel";
 import { useMemo } from "react";
 import { audioUrl } from "@/lib/api";
 import { speakersDuring, timedSegments, transcriptForClipboard } from "@/lib/transcript";
@@ -13,8 +14,8 @@ export function MeetingTranscript({ recording, transcribing }: { recording: Reco
   })), [recording.meeting_transcript_segments, recording.participants]);
   const copyText = useMemo(() => transcriptForClipboard(recording), [recording]);
 
-  return <section className="panel" aria-labelledby="meeting-transcript-heading">
-    <div className="section-head"><h2 id="meeting-transcript-heading" style={{ margin: 0 }}>Meeting audio and transcript</h2></div>
+  return <Panel aria-labelledby="meeting-transcript-heading">
+    <SectionHeader title="Meeting audio and transcript" titleId="meeting-transcript-heading" />
     <TranscriptPlayer
       audioSrc={recording.main_track_path ? audioUrl.meeting(recording.id) : undefined}
       segments={segments}
@@ -24,5 +25,5 @@ export function MeetingTranscript({ recording, transcribing }: { recording: Reco
       label="Meeting"
       showSpeakers
     />
-  </section>;
+  </Panel>;
 }

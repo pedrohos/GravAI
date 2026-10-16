@@ -1,9 +1,12 @@
 "use client";
 
+import { DataTable } from "@/components/DataTable";
+import { EmptyState } from "@/components/ui/Feedback";
+import { Button } from "@/components/ui/Button";
 import { TaskTypeBadge } from "./TaskTypeBadge";
 import { JobResults } from "./JobResults";
 import { DeleteButton } from "./DeleteButton";
-import { TableHeader, useTableSort } from "./TableControls";
+import { useTableSort } from "./TableControls";
 import { useColumnWidths } from "@/lib/useColumnWidths";
 import { MeetingRecordingLink } from "./MeetingRecordingLink";
 import { api } from "@/lib/api";
@@ -28,7 +31,7 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
 
   const sorting = useTableSort(jobs, [job => job.type, job => job.status, job => job.created_at, job => job.params.meeting_url || job.session_dir || job.params.tracks_output_dir, job => ACTIVE_STATUSES.includes(job.status) ? "Cancel" : "Delete"], 2, true);
 
-  if (!jobs.length) return <div className="empty">No jobs yet. Submit one above.</div>;
+  if (!jobs.length) return <EmptyState>No jobs yet. Submit one above.</EmptyState>;
 
   async function stop(job: Job) {
     if (!confirm(STOP_WARNING)) return;
@@ -48,11 +51,7 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
   }
 
   return (
-    <table className="jobs-table" ref={sizing.tableRef} style={sizing.widths ? { width: sizing.widths.reduce((total, width) => total + width, 0) } : undefined}>
-      <colgroup>
-        {columns.map((label, index) => <col key={label} style={{ width: sizing.widths ? sizing.widths[index] : `${[17, 23, 20, 28, 12][index]}%` }} />)}
-      </colgroup>
-      <TableHeader labels={columns} sizing={sizing} sorting={sorting} sortableCount={columns.length - 1} />
+    <DataTable columns={columns} defaultWidths={[17, 23, 20, 28, 12]} sizing={sizing} sorting={sorting}>
       <tbody>
         {sorting.sorted.map((job) => {
           const active = ACTIVE_STATUSES.includes(job.status);
@@ -93,22 +92,22 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
 
               <td className="actions">
                 {canStop && (
-                  <button
-                    className="small"
+                  <Button
+                    size="small"
                     onClick={() => void stop(job)}
                     title="Leave the meeting and keep the recording"
                   >
                     Stop
-                  </button>
+                  </Button>
                 )}
                 {active ? (
-                  <button
-                    className="small danger"
+                  <Button
+                    size="small" variant="danger"
                     onClick={() => void cancel(job)}
                     title="Kill it. Nothing is kept."
                   >
                     Cancel
-                  </button>
+                  </Button>
                 ) : (
                   <DeleteButton onClick={() => void remove(job)}>
                     Delete
@@ -119,6 +118,6 @@ export function JobsTable({ jobs, onChanged }: { jobs: Job[]; onChanged: () => v
           );
         })}
       </tbody>
-    </table>
+    </DataTable>
   );
 }

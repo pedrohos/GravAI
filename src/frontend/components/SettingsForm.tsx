@@ -1,6 +1,9 @@
 "use client";
 
-import { Icon } from "./Icon";
+import { Panel } from "@/components/ui/Panel";
+import { Input, FormField, Checkbox } from "@/components/ui/FormField";
+import { Button } from "@/components/ui/Button";
+import { InfoTooltip } from "./ui/InfoTooltip";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { ConfigField, ConfigResponse } from "@/lib/types";
@@ -73,8 +76,7 @@ export function SettingsForm({ config, onSaved }: { config: ConfigResponse; onSa
   return (
     <form onSubmit={onSubmit}>
       {group(config).map(([title, fields]) => (
-        <section className="panel" key={title}>
-          <h2>{title}</h2>
+        <Panel key={title} title={title}>
           <div className="row" style={{ alignItems: "flex-start" }}>
             {fields.map((field) => (
               <Field
@@ -86,16 +88,16 @@ export function SettingsForm({ config, onSaved }: { config: ConfigResponse; onSa
               />
             ))}
           </div>
-        </section>
+        </Panel>
       ))}
 
       <div className="row">
-        <button className="primary" type="submit" disabled={busy || !dirty}>
+        <Button variant="primary" type="submit" disabled={busy || !dirty}>
           Save settings
-        </button>
-        <button type="button" disabled={busy || !dirty} onClick={onSaved}>
+        </Button>
+        <Button type="button" disabled={busy || !dirty} onClick={onSaved}>
           Revert
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -119,40 +121,24 @@ function Field({
     </>
   );
   const descriptionId = `help-${field.name}`;
-  const fieldLabel = (
-    <div className="setting-label">
-      <label htmlFor={`set-${field.name}`}>{label}</label>
-      {field.description && (
-        <span className="info-tooltip">
-          <button type="button" className="info-trigger" aria-label={`Information about ${field.name}`} aria-describedby={descriptionId}><Icon name="info" /></button>
-          <span id={descriptionId} role="tooltip" className="info-content">{field.description}</span>
-        </span>
-      )}
-    </div>
-  );
+  const labelAction = field.description ? <InfoTooltip id={descriptionId} label={`Information about ${field.name}`}>{field.description}</InfoTooltip> : undefined;
 
   if (field.kind === "bool") {
     return (
-      <div className="field">
-        {fieldLabel}
-        <label className="check">
-          <input
-            id={`set-${field.name}`}
-            disabled={disabled}
-            type="checkbox"
-            checked={isTrue(value)}
-            onChange={(event) => onChange(String(event.target.checked ? "True" : "False"))}
-          />{" "}
-          enabled
-        </label>
-      </div>
+      <FormField id={`set-${field.name}`} label={label} labelAction={labelAction}>
+        <Checkbox
+          id={`set-${field.name}`}
+          disabled={disabled}
+          checked={isTrue(value)}
+          onChange={(event) => onChange(String(event.target.checked ? "True" : "False"))}
+        >enabled</Checkbox>
+      </FormField>
     );
   }
 
   return (
-    <div className="field">
-      {fieldLabel}
-      <input
+    <FormField id={`set-${field.name}`} label={label} labelAction={labelAction}>
+      <Input
         disabled={disabled}
         type={field.secret ? "password" : "text"}
         id={`set-${field.name}`}
@@ -164,6 +150,6 @@ function Field({
         placeholder={field.secret && field.is_set ? "unchanged" : ""}
         autoComplete="off"
       />
-    </div>
+    </FormField>
   );
 }

@@ -1,0 +1,32 @@
+/* Buttons styles shared by the corresponding UI components. */
+
+.button {
+  font: inherit;
+  font-size: 14px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) { border-color: var(--accent); }
+
+.button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+button.primary { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+
+button.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
+
+button.small { padding: 4px 10px; font-size: 13px; }
+
+button.delete-transcription { background: #303640; color: var(--bad); }
+
+button.delete-transcription:hover:not(:disabled) { background: #3b424e; border-color: var(--bad); }
+
+button.delete-both { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+
+button.delete-both:hover:not(:disabled) { background: #991b1b; border-color: #f87171; }
+
+.button, button.small { font-size: 16px; }

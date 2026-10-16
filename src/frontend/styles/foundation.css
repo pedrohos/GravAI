@@ -1,0 +1,47 @@
+/* Global theme, reset, typography, and text utilities only. */
+
+:root {
+  --bg: #0f1115;
+  --bg-raised: #161a21;
+  --bg-inset: #10141a;
+  --border: #262c37;
+  --border-strong: #38414f;
+  --text: #e6e9ef;
+  --text-dim: #9aa4b4;
+  --text-faint: #6b7585;
+  --accent: #6aa6ff;
+  --accent-dim: #29456f;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --busy: #7dd3fc;
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+a { color: var(--accent); text-decoration: none; }
+
+a:hover { text-decoration: underline; }
+
+h1 { overflow-wrap: anywhere; font-size: 28px; margin: 0 0 4px; font-weight: 620; }
+
+h2 { font-size: 20px; margin: 0 0 12px; font-weight: 600; }
+
+h3 { font-size: 18px; margin: 0; font-weight: 600; }
+
+.subtitle { overflow-wrap: anywhere; color: var(--text-dim); font-size: 16px; margin: 0 0 24px; max-width: 68ch; }
+
+.mono { font-family: var(--mono); font-size: 15px; overflow-wrap: anywhere; }
+
+.dim { color: var(--text-dim); }
+
+.faint { color: #a1aaba; }
